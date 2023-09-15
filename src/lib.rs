@@ -1,3 +1,6 @@
+pub mod encoding;
+pub mod otp;
+
 pub fn add(left: usize, right: usize) -> usize {
     left + right
 }
