@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Created with Inkscape (http://www.inkscape.org/) -->
+
+<svg
+   width="210mm"
+   height="297mm"
+   viewBox="0 0 210 297"
+   version="1.1"
+   id="svg1"
+   inkscape:version="1.3 (0e150ed6c4, 2023-07-21)"
+   sodipodi:docname="保险箱.svg"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <sodipodi:namedview
+     id="namedview1"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:document-units="mm"
+     inkscape:zoom="2.2589224"
+     inkscape:cx="220.23775"
+     inkscape:cy="201.64482"
+     inkscape:window-width="3840"
+     inkscape:window-height="2054"
+     inkscape:window-x="-11"
+     inkscape:window-y="-11"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="layer1" />
+  <defs
+     id="defs1">
+    <inkscape:path-effect
+       effect="fillet_chamfer"
+       id="path-effect2"
+       is_visible="true"
+       lpeversion="1"
+       nodesatellites_param="F,0,0,1,0,0,0,1 @ F,0,0,1,0,0,0,1 @ F,0,0,1,0,0,0,1 @ F,0,0,1,0,0,0,1 @ F,0,0,1,0,0,0,1 @ F,0,0,1,0,0,0,1 @ F,0,0,1,0,0,0,1 @ F,0,0,1,0,0,0,1"
+       radius="0"
+       unit="px"
+       method="auto"
+       mode="F"
+       chamfer_steps="1"
+       flexible="false"
+       use_knot_distance="true"
+       apply_no_radius="true"
+       apply_with_radius="true"
+       only_selected="false"
+       hide_knots="false" />
+  </defs>
+  <g
+     inkscape:label="图层 1"
+     inkscape:groupmode="layer"
+     id="layer1">
+    <path
+       id="rect2"
+       style="display:inline;fill:#43454a;stroke-width:0.264583;image-rendering:auto;fill-opacity:1"
+       d="M 9.999906,0 C 4.459912,0 0,4.459912 0,9.9999065 V 69.999862 c 0,5.539994 4.459912,9.999904 9.999906,9.999904 h 59.999952 c 5.54,0 9.99991,-4.45991 9.99991,-9.999904 V 9.9999065 C 79.999768,4.459912 75.539858,0 69.999858,0 Z m 1.999878,6.00015 h 56.000204 c 3.32399,0 6.00015,2.675637 6.00015,5.999634 v 56.0002 c 0,3.323996 -2.67616,6.00015 -6.00015,6.00015 H 11.999784 c -3.323996,0 -5.999633,-2.676154 -5.999633,-6.00015 v -56.0002 c 0,-3.323997 2.675637,-5.999634 5.999633,-5.999634 z"
+       inkscape:label="外框" />
+    <path
+       id="path5"
+       style="fill:#43454a;fill-opacity:1;stroke-width:0.188953"
+       d="M 39.999813,20 A 20,20 0 0 0 20,39.999813 20,20 0 0 0 39.999813,60.000142 20,20 0 0 0 60.000142,39.999813 20,20 0 0 0 39.999813,20 Z m 0,5.000212 A 15,15 0 0 1 54.999931,39.999813 15,15 0 0 1 39.999813,54.999931 15,15 0 0 1 25.000212,39.999813 15,15 0 0 1 39.999813,25.000212 Z" />
+    <rect
+       style="display:inline;fill:#43454a;fill-opacity:1;stroke-width:0.140091"
+       id="rect6"
+       width="10"
+       height="5"
+       x="55"
+       y="-42.5"
+       transform="rotate(90)"
+       ry="2.5" />
+    <circle
+       style="fill:#d54b44;fill-opacity:1;stroke-width:0.264583"
+       id="path7"
+       cx="48.75"
+       cy="31.75"
+       r="1.25" />
+  </g>
+</svg>
