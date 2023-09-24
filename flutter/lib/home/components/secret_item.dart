@@ -1,4 +1,4 @@
-import 'package:authenticator/provider/secret_list.dart';
+import 'package:authenticator/home/provider/secret_list.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -16,13 +16,16 @@ class SecretItem extends StatefulWidget {
 
 class _SecretItemState extends State<SecretItem> with TickerProviderStateMixin {
   late Animation<double> _animation;
+  late Animation<bool> _trigger;
+  late Text _codeText;
 
   _SecretItemState();
 
   @override
   void initState() {
-    _animation =
-        Tween<double>(begin: 0.0, end: 1.0).animate(widget._controller);
+    _animation = Tween<double>(begin: 0, end: 1.0).animate(widget._controller);
+    _trigger = Trigger().animate(widget._controller);
+
     super.initState();
   }
 
@@ -41,7 +44,9 @@ class _SecretItemState extends State<SecretItem> with TickerProviderStateMixin {
                   children: [
                     Expanded(
                         child: Text(
-                      "${secret.name}(${secret.comment})",
+                      secret.comment.isNotEmpty
+                          ? secret.comment
+                          : "${secret.label}(${secret.issuer})",
                       textAlign: TextAlign.left,
                       softWrap: true,
                       overflow: TextOverflow.ellipsis,
@@ -57,14 +62,16 @@ class _SecretItemState extends State<SecretItem> with TickerProviderStateMixin {
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
                       Expanded(
-                          child: Text(
-                        secret.code.isEmpty
-                            ? ""
-                            : "${secret.code.substring(0, (secret.code.length + 1) ~/ 2)} ${secret.code.substring((secret.code.length + 1) ~/ 2)}",
-                        textAlign: TextAlign.left,
-                        style: const TextStyle(
-                            color: Colors.lightBlueAccent, fontSize: 24),
-                      )),
+                        child: AnimatedBuilder(
+                          animation: _trigger,
+                          builder: (BuildContext context, Widget? child) {
+                            if (_trigger.value) {
+                              _codeText = _code(context);
+                            }
+                            return _codeText;
+                          },
+                        ),
+                      ),
                       Padding(
                           padding: const EdgeInsets.only(right: 8.0),
                           child: SizedBox(
@@ -84,5 +91,33 @@ class _SecretItemState extends State<SecretItem> with TickerProviderStateMixin {
                 ),
               ]);
         });
+  }
+
+  Text _code(BuildContext context) {
+    String code = Provider.of<SecretListProvider>(context, listen: false)
+        .code(widget._index);
+    return Text(
+      code.isEmpty
+          ? ""
+          : "${code.substring(0, (code.length + 1) ~/ 2)} ${code.substring((code.length + 1) ~/ 2)}",
+      textAlign: TextAlign.left,
+      style: const TextStyle(color: Colors.lightBlueAccent, fontSize: 24),
+    );
+  }
+}
+
+class Trigger extends Animatable<bool> {
+  bool trigger = true;
+  double _pre = 0.0;
+
+  @override
+  bool transform(double t) {
+    if (t < _pre || t == 0.0) {
+      trigger = true;
+    }
+    _pre = t;
+    bool res = trigger;
+    trigger = false;
+    return res;
   }
 }

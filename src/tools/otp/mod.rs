@@ -1,4 +1,4 @@
-use crate::encoding::{base32, urlencoded};
+use crate::tools::encoding::{base32, urlencoded};
 use std::fmt;
 
 mod timestamp;
@@ -160,7 +160,7 @@ pub trait OtpGenerator {
 
 #[cfg(test)]
 mod tests {
-    use crate::otp::{parse_otpauth_uri, OtpType, SecretAlgorithm};
+    use crate::tools::otp::{parse_otpauth_uri, OtpType, SecretAlgorithm};
 
     #[test]
     fn test_parse_optauth() {

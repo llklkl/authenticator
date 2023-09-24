@@ -1,5 +1,5 @@
 use super::SecretAlgorithm;
-use crate::otp::{get_secret_key, OtpGenerator, timestamp};
+use crate::tools::otp::{get_secret_key, OtpGenerator, timestamp};
 use hmac::{Hmac, Mac};
 use sha1::Sha1;
 use sha2::{Sha256, Sha512};

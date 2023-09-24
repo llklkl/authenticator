@@ -3,7 +3,7 @@
 // };
 
 use super::alphabet;
-use crate::encoding::DecodeError;
+use crate::tools::encoding::DecodeError;
 
 pub struct Encoding {
     encode_tbl: [u8; 32],
@@ -592,20 +592,37 @@ mod tests {
         assert_eq!(EXTENDED_HEX_RAW.decode(b"CPNMUOJ1E8").unwrap(), b"foobar");
     }
 
-
     #[test]
     fn test_extended_hex_decode_error() {
-        assert_eq!(EXTENDED_HEX.decode(b"CO===").unwrap_err(), DecodeError::InvalidPadding);
-        assert_eq!(EXTENDED_HEX.decode(b"CPNG=1==").unwrap_err(), DecodeError::InvalidPadding);
+        assert_eq!(
+            EXTENDED_HEX.decode(b"CO===").unwrap_err(),
+            DecodeError::InvalidPadding
+        );
+        assert_eq!(
+            EXTENDED_HEX.decode(b"CPNG=1==").unwrap_err(),
+            DecodeError::InvalidPadding
+        );
         assert_eq!(EXTENDED_HEX.decode(b"CPNMU===").unwrap(), b"foo");
         assert_eq!(EXTENDED_HEX.decode(b"CPNMUOG=").unwrap(), b"foob");
         assert_eq!(EXTENDED_HEX.decode(b"CPNMUOJ1").unwrap(), b"fooba");
         assert_eq!(EXTENDED_HEX.decode(b"CPNMUOJ1E8======").unwrap(), b"foobar");
         assert_eq!(EXTENDED_HEX.decode(b"CPNMUOJ1E8======").unwrap(), b"foobar");
 
-        assert_eq!(EXTENDED_HEX_RAW.decode(b"=").unwrap_err(), DecodeError::InvalidByte(0, b'='));
-        assert_eq!(EXTENDED_HEX_RAW.decode(b"CZ").unwrap_err(), DecodeError::InvalidByte(1, b'Z'));
-        assert_eq!(EXTENDED_HEX_RAW.decode(b"CPN").unwrap_err(), DecodeError::InvalidLength(3));
-        assert_eq!(EXTENDED_HEX_RAW.decode(b"CPNG====").unwrap_err(), DecodeError::InvalidByte(4, b'='));
+        assert_eq!(
+            EXTENDED_HEX_RAW.decode(b"=").unwrap_err(),
+            DecodeError::InvalidByte(0, b'=')
+        );
+        assert_eq!(
+            EXTENDED_HEX_RAW.decode(b"CZ").unwrap_err(),
+            DecodeError::InvalidByte(1, b'Z')
+        );
+        assert_eq!(
+            EXTENDED_HEX_RAW.decode(b"CPN").unwrap_err(),
+            DecodeError::InvalidLength(3)
+        );
+        assert_eq!(
+            EXTENDED_HEX_RAW.decode(b"CPNG====").unwrap_err(),
+            DecodeError::InvalidByte(4, b'=')
+        );
     }
 }

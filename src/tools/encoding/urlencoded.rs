@@ -1,4 +1,4 @@
-use crate::encoding::DecodeError;
+use crate::tools::encoding::DecodeError;
 
 const HEX_TBL: &[u8] = b"0123456789ABCDEF";
 
@@ -67,7 +67,7 @@ fn unhex(ch: u8) -> u8 {
 
 #[cfg(test)]
 mod tests {
-    use crate::encoding::urlencoded::{decode, encode};
+    use crate::tools::encoding::urlencoded::{decode, encode};
 
     #[test]
     fn test_encode() {

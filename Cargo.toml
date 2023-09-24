@@ -12,7 +12,8 @@ sha1 = "0.10.5"
 sha2 = "0.10.6"
 simple-ntp = "0.1.1"
 tokio = { version = "1", features = ["full"] }
+flutter_rust_bridge = "1"
 
 [lib]
-name = "authenticator"
-crate-type = ["staticlib"]
+name = "authenticatorlib"
+crate-type = ["staticlib", "cdylib"]
