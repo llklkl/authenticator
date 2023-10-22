@@ -1,15 +1,36 @@
-use once_cell::sync::Lazy;
+use std::sync::{Once, OnceLock};
 
-pub static APP: Lazy<App> = Lazy::new(App::new);
+pub struct App {
+    _cfg: AppConfig,
+}
 
-pub struct App {}
+#[derive(Clone)]
+pub struct AppConfig {
+    pub db_path: String,
+}
+
+static mut APP: Option<App> = None;
+static ONCE: Once = Once::new();
 
 impl App {
-    pub fn new() -> Self {
-        App {}
+    fn from(_cfg: AppConfig) -> Self {
+        App { _cfg }
     }
 
-    pub fn hello(&self) -> String {
-        String::from("hello rust")
+    pub fn init(_cfg: AppConfig) {
+        unsafe {
+            ONCE.call_once(|| {
+                APP = Some(App::from(_cfg));
+            });
+        }
+    }
+
+    pub fn instance() -> &'static App {
+        unsafe { APP.as_ref().unwrap() }
+    }
+
+    pub fn info(&self) -> String {
+        println!("call info");
+        self._cfg.db_path.clone()
     }
 }

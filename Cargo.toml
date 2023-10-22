@@ -13,6 +13,7 @@ sha2 = "0.10.6"
 simple-ntp = "0.1.1"
 tokio = { version = "1", features = ["full"] }
 flutter_rust_bridge = "1"
+diesel = { version = "2.1.2", features = ["sqlite"] }
 
 [lib]
 name = "authenticatorlib"

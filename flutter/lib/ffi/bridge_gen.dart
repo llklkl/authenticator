@@ -11,9 +11,21 @@ import 'package:uuid/uuid.dart';
 import 'dart:ffi' as ffi;
 
 abstract class Authenticator {
-  Future<String> hello({dynamic hint});
+  Future<void> init({required AppConfig cfg, dynamic hint});
 
-  FlutterRustBridgeTaskConstMeta get kHelloConstMeta;
+  FlutterRustBridgeTaskConstMeta get kInitConstMeta;
+
+  Future<String> info({dynamic hint});
+
+  FlutterRustBridgeTaskConstMeta get kInfoConstMeta;
+}
+
+class AppConfig {
+  final String dbPath;
+
+  const AppConfig({
+    required this.dbPath,
+  });
 }
 
 class AuthenticatorImpl implements Authenticator {
@@ -25,20 +37,38 @@ class AuthenticatorImpl implements Authenticator {
   factory AuthenticatorImpl.wasm(FutureOr<WasmModule> module) =>
       AuthenticatorImpl(module as ExternalLibrary);
   AuthenticatorImpl.raw(this._platform);
-  Future<String> hello({dynamic hint}) {
+  Future<void> init({required AppConfig cfg, dynamic hint}) {
+    var arg0 = _platform.api2wire_box_autoadd_app_config(cfg);
     return _platform.executeNormal(FlutterRustBridgeTask(
-      callFfi: (port_) => _platform.inner.wire_hello(port_),
+      callFfi: (port_) => _platform.inner.wire_init(port_, arg0),
+      parseSuccessData: _wire2api_unit,
+      parseErrorData: null,
+      constMeta: kInitConstMeta,
+      argValues: [cfg],
+      hint: hint,
+    ));
+  }
+
+  FlutterRustBridgeTaskConstMeta get kInitConstMeta =>
+      const FlutterRustBridgeTaskConstMeta(
+        debugName: "init",
+        argNames: ["cfg"],
+      );
+
+  Future<String> info({dynamic hint}) {
+    return _platform.executeNormal(FlutterRustBridgeTask(
+      callFfi: (port_) => _platform.inner.wire_info(port_),
       parseSuccessData: _wire2api_String,
       parseErrorData: null,
-      constMeta: kHelloConstMeta,
+      constMeta: kInfoConstMeta,
       argValues: [],
       hint: hint,
     ));
   }
 
-  FlutterRustBridgeTaskConstMeta get kHelloConstMeta =>
+  FlutterRustBridgeTaskConstMeta get kInfoConstMeta =>
       const FlutterRustBridgeTaskConstMeta(
-        debugName: "hello",
+        debugName: "info",
         argNames: [],
       );
 
@@ -58,9 +88,18 @@ class AuthenticatorImpl implements Authenticator {
   Uint8List _wire2api_uint_8_list(dynamic raw) {
     return raw as Uint8List;
   }
+
+  void _wire2api_unit(dynamic raw) {
+    return;
+  }
 }
 
 // Section: api2wire
+
+@protected
+int api2wire_u8(int raw) {
+  return raw;
+}
 
 // Section: finalizer
 
@@ -70,9 +109,36 @@ class AuthenticatorPlatform extends FlutterRustBridgeBase<AuthenticatorWire> {
 
 // Section: api2wire
 
+  @protected
+  ffi.Pointer<wire_uint_8_list> api2wire_String(String raw) {
+    return api2wire_uint_8_list(utf8.encoder.convert(raw));
+  }
+
+  @protected
+  ffi.Pointer<wire_AppConfig> api2wire_box_autoadd_app_config(AppConfig raw) {
+    final ptr = inner.new_box_autoadd_app_config_0();
+    _api_fill_to_wire_app_config(raw, ptr.ref);
+    return ptr;
+  }
+
+  @protected
+  ffi.Pointer<wire_uint_8_list> api2wire_uint_8_list(Uint8List raw) {
+    final ans = inner.new_uint_8_list_0(raw.length);
+    ans.ref.ptr.asTypedList(raw.length).setAll(0, raw);
+    return ans;
+  }
 // Section: finalizer
 
 // Section: api_fill_to_wire
+
+  void _api_fill_to_wire_app_config(AppConfig apiObj, wire_AppConfig wireObj) {
+    wireObj.db_path = api2wire_String(apiObj.dbPath);
+  }
+
+  void _api_fill_to_wire_box_autoadd_app_config(
+      AppConfig apiObj, ffi.Pointer<wire_AppConfig> wireObj) {
+    _api_fill_to_wire_app_config(apiObj, wireObj.ref);
+  }
 }
 
 // ignore_for_file: camel_case_types, non_constant_identifier_names, avoid_positional_boolean_parameters, annotate_overrides, constant_identifier_names
@@ -171,17 +237,59 @@ class AuthenticatorWire implements FlutterRustBridgeWireBase {
   late final _init_frb_dart_api_dl = _init_frb_dart_api_dlPtr
       .asFunction<int Function(ffi.Pointer<ffi.Void>)>();
 
-  void wire_hello(
+  void wire_init(
+    int port_,
+    ffi.Pointer<wire_AppConfig> _cfg,
+  ) {
+    return _wire_init(
+      port_,
+      _cfg,
+    );
+  }
+
+  late final _wire_initPtr = _lookup<
+      ffi.NativeFunction<
+          ffi.Void Function(
+              ffi.Int64, ffi.Pointer<wire_AppConfig>)>>('wire_init');
+  late final _wire_init = _wire_initPtr
+      .asFunction<void Function(int, ffi.Pointer<wire_AppConfig>)>();
+
+  void wire_info(
     int port_,
   ) {
-    return _wire_hello(
+    return _wire_info(
       port_,
     );
   }
 
-  late final _wire_helloPtr =
-      _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Int64)>>('wire_hello');
-  late final _wire_hello = _wire_helloPtr.asFunction<void Function(int)>();
+  late final _wire_infoPtr =
+      _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Int64)>>('wire_info');
+  late final _wire_info = _wire_infoPtr.asFunction<void Function(int)>();
+
+  ffi.Pointer<wire_AppConfig> new_box_autoadd_app_config_0() {
+    return _new_box_autoadd_app_config_0();
+  }
+
+  late final _new_box_autoadd_app_config_0Ptr =
+      _lookup<ffi.NativeFunction<ffi.Pointer<wire_AppConfig> Function()>>(
+          'new_box_autoadd_app_config_0');
+  late final _new_box_autoadd_app_config_0 = _new_box_autoadd_app_config_0Ptr
+      .asFunction<ffi.Pointer<wire_AppConfig> Function()>();
+
+  ffi.Pointer<wire_uint_8_list> new_uint_8_list_0(
+    int len,
+  ) {
+    return _new_uint_8_list_0(
+      len,
+    );
+  }
+
+  late final _new_uint_8_list_0Ptr = _lookup<
+          ffi
+          .NativeFunction<ffi.Pointer<wire_uint_8_list> Function(ffi.Int32)>>(
+      'new_uint_8_list_0');
+  late final _new_uint_8_list_0 = _new_uint_8_list_0Ptr
+      .asFunction<ffi.Pointer<wire_uint_8_list> Function(int)>();
 
   void free_WireSyncReturn(
     WireSyncReturn ptr,
@@ -199,6 +307,17 @@ class AuthenticatorWire implements FlutterRustBridgeWireBase {
 }
 
 final class _Dart_Handle extends ffi.Opaque {}
+
+final class wire_uint_8_list extends ffi.Struct {
+  external ffi.Pointer<ffi.Uint8> ptr;
+
+  @ffi.Int32()
+  external int len;
+}
+
+final class wire_AppConfig extends ffi.Struct {
+  external ffi.Pointer<wire_uint_8_list> db_path;
+}
 
 typedef DartPostCObjectFnType = ffi.Pointer<
     ffi.NativeFunction<
