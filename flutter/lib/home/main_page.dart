@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'components/secret_item.dart';
+import 'components/fab.dart';
 import 'model/secret.dart';
 import 'provider/secret_list.dart';
 
@@ -16,13 +17,15 @@ class MainPage extends StatefulWidget {
   State<MainPage> createState() => _MainPageState();
 }
 
-class _MainPageState extends State<MainPage>
-    with SingleTickerProviderStateMixin {
+class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
   SecretListProvider provider = SecretListProvider();
 
   final Map<int, AnimationController> _aniController = {};
   final ScrollController _scrollController = ScrollController();
+
   bool _loadingMore = false;
+  // 是否显示遮罩层
+  bool _showModalBarrier = false;
 
   String name = "";
 
@@ -71,6 +74,12 @@ class _MainPageState extends State<MainPage>
     }
   }
 
+  void _onFabPressed() {
+    setState(() {
+      _showModalBarrier = !_showModalBarrier;
+    });
+  }
+
   @override
   void initState() {
     _scrollController.addListener(_onScroll);
@@ -79,7 +88,6 @@ class _MainPageState extends State<MainPage>
       _loadMore();
     });
     Api.info().then((value) {
-      print("ffi: {$value}");
       name = value;
       setState(() {});
     });
@@ -98,34 +106,42 @@ class _MainPageState extends State<MainPage>
         value: provider,
         child: Scaffold(
           appBar: AppBar(
-            // Here we take the value from the MyHomePage object that was created by
-            // the App.build method, and use it to set our appbar title.
             title: Text(widget.title),
           ),
-          body: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
-            child: ListView.separated(
-                controller: _scrollController,
-                itemCount: provider.length() + 1,
-                separatorBuilder: (context, _) {
-                  return const Divider();
-                },
-                itemBuilder: (context, index) {
-                  print(
-                      "itemBuilder index: $index, length: ${provider.length()}");
-                  if (index >= provider.length()) {
-                    return const SizedBox(
-                      height: 10,
-                    );
-                  } else {
-                    return SecretItem(index, getController(context, index));
-                  }
-                }),
-          ),
-          floatingActionButton: FloatingActionButton(
-            onPressed: _incrementCounter,
-            tooltip: name,
-            child: const Icon(Icons.add),
+          body: Stack(alignment: Alignment.topLeft, children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+              child: ListView.separated(
+                  controller: _scrollController,
+                  itemCount: provider.length() + 1,
+                  separatorBuilder: (context, _) {
+                    return const Divider();
+                  },
+                  itemBuilder: (context, index) {
+                    if (index >= provider.length()) {
+                      return const SizedBox(
+                        height: 10,
+                      );
+                    } else {
+                      return SecretItem(index, getController(context, index));
+                    }
+                  }),
+            ),
+            if (_showModalBarrier)
+              ModalBarrier(
+                color: Colors.black.withOpacity(0.2),
+                dismissible: true,
+              )
+          ]),
+          floatingActionButton: Fab(onPressed: _onFabPressed, children: const [
+            ActionButton(icon: Icon(Icons.camera), tips: Text("扫描")),
+          ]),
+          drawer: Drawer(
+            child: ListView(children: const [
+              ListTile(
+                title: Text("同步"),
+              )
+            ]),
           ),
         ));
   }

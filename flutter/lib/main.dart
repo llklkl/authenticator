@@ -43,8 +43,7 @@ class AuthenticatorApp extends StatelessWidget {
     return MaterialApp(
       title: '身份验证器',
       theme: ThemeData(
-        primarySwatch: Colors.orange,
-      ),
+          primarySwatch: Colors.orange, fontFamily: "Microsoft YaHei UI"),
       home: const MainPage(),
     );
   }
