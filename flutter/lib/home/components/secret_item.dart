@@ -14,7 +14,7 @@ class SecretItem extends StatefulWidget {
   State<SecretItem> createState() => _SecretItemState();
 }
 
-class _SecretItemState extends State<SecretItem> with TickerProviderStateMixin {
+class _SecretItemState extends State<SecretItem> {
   late Animation<double> _animation;
   late Animation<bool> _trigger;
   late Text _codeText;
@@ -32,7 +32,7 @@ class _SecretItemState extends State<SecretItem> with TickerProviderStateMixin {
   @override
   Widget build(BuildContext context) {
     return Selector<SecretListProvider, Secret>(
-        selector: (context, provider) => provider.list[widget._index],
+        selector: (context, provider) => provider.get(widget._index),
         builder: (context, secret, child) {
           return Column(
               mainAxisAlignment: MainAxisAlignment.start,

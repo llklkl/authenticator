@@ -3,10 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:authenticator/home/model/secret.dart';
 
 class SecretListProvider extends ChangeNotifier {
-  late List<Secret> _list = [];
-  int _length = 0;
-
-  List<Secret> get list => _list;
+  List<Secret> _list = [];
 
   void add(Secret secret) {
     SecretRepo.repo.insert(secret);
@@ -14,12 +11,9 @@ class SecretListProvider extends ChangeNotifier {
   }
 
   Future load() {
-    print("load all secret from db");
     return SecretRepo.repo.getAll().then((value) {
       _list = value;
-      _length = _list.length;
       notifyListeners();
-      print("load secret done");
     });
   }
 
@@ -28,7 +22,7 @@ class SecretListProvider extends ChangeNotifier {
   }
 
   int length() {
-    return _length;
+    return _list.length;
   }
 
   String code(int index) {
