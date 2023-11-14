@@ -1,4 +1,4 @@
-use std::sync::{Once, OnceLock};
+use std::sync::Once;
 
 pub struct App {
     _cfg: AppConfig,
@@ -30,7 +30,6 @@ impl App {
     }
 
     pub fn info(&self) -> String {
-        println!("call info");
         self._cfg.db_path.clone()
     }
 }
