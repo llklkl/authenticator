@@ -85,6 +85,8 @@ dependencies {
     tasks.register("cargoBuild$taskPostfix", Exec) {
         workingDir "../../../"
         // environment ANDROID_NDK_HOME: "$ANDROID_NDK"
+        environment AARCH64_LINUX_ANDROID_OPENSSL_LIB_DIR: "$AARCH64_LINUX_ANDROID_OPENSSL_LIB_DIR"
+        environment AARCH64_LINUX_ANDROID_OPENSSL_INCLUDE_DIR: "$AARCH64_LINUX_ANDROID_OPENSSL_INCLUDE_DIR"
         commandLine 'cargo', 'ndk',
                 // '-t', 'armeabi-v7a',
                 '-t', 'arm64-v8a',
