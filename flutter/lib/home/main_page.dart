@@ -127,14 +127,11 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
                     }
                   }),
             ),
-            if (_showModalBarrier)
-              ModalBarrier(
-                color: Colors.black.withOpacity(0.2),
-                dismissible: true,
-              )
-          ]),
-          floatingActionButton: Fab(onPressed: _onFabPressed, children: const [
-            ActionButton(icon: Icon(Icons.camera), tips: Text("扫描")),
+            const Fab(children: [
+              ActionButton(icon: Icon(Icons.camera), tips: Text("扫描1")),
+              ActionButton(icon: Icon(Icons.camera), tips: Text("扫描2")),
+              ActionButton(icon: Icon(Icons.camera), tips: Text("扫描3")),
+            ]),
           ]),
           drawer: Drawer(
             child: ListView(children: const [

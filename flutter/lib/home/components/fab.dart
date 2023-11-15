@@ -6,12 +6,10 @@ const double _floatButtionSmallSize = 42;
 class Fab extends StatefulWidget {
   const Fab({
     super.key,
-    this.onPressed,
     required this.children,
   });
 
   final List<ActionButton> children;
-  final void Function()? onPressed;
 
   @override
   State<Fab> createState() => _FabState();
@@ -28,9 +26,6 @@ class _FabState extends State<Fab> with SingleTickerProviderStateMixin {
   late AnimationController _animationController;
 
   void _onToggle() {
-    if (widget.onPressed != null) {
-      widget.onPressed!();
-    }
     setState(() {
       if (!_opened) {
         _animationController.forward();
@@ -60,21 +55,24 @@ class _FabState extends State<Fab> with SingleTickerProviderStateMixin {
         duration: _aniDutaion,
         child: IgnorePointer(
           ignoring: !_opened,
-          child: Column(children: widget.children),
+          child: Wrap(
+            direction: Axis.vertical,
+            spacing: 18,
+            children: widget.children,
+          ),
         ));
   }
 
-  void buildModal(BuildContext context) {
-    if (!_opened) {
-      return;
-    }
-    Overlay.of(context).insert(OverlayEntry(builder: (context) {
-      return ModalBarrier(
-        color: Colors.grey.shade800.withAlpha(80),
-        dismissible: false,
+  Widget buildModal(BuildContext context) {
+    return AnimatedOpacity(
+      duration: _aniDutaion,
+      opacity: _opened ? 1 : 0,
+      child: ModalBarrier(
+        dismissible: _opened,
         onDismiss: _onToggle,
-      );
-    }));
+        color: Colors.black.withOpacity(0.2),
+      ),
+    );
   }
 
   @override
@@ -86,17 +84,23 @@ class _FabState extends State<Fab> with SingleTickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) {
-    // buildModal(context);
     return SizedBox.expand(
       child: Stack(alignment: Alignment.bottomRight, children: [
-        Column(
-          mainAxisAlignment: MainAxisAlignment.end,
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            buildOpenFab(context),
-            buildCloseFab(context),
-          ],
-        )
+        if (_opened) buildModal(context),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 48),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.end,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Padding(
+                padding: const EdgeInsets.only(bottom: 18),
+                child: buildOpenFab(context),
+              ),
+              buildCloseFab(context),
+            ],
+          ),
+        ),
       ]),
     );
   }
@@ -136,9 +140,11 @@ class ActionButton extends StatelessWidget {
           clipBehavior: Clip.antiAlias,
           child: tips,
         ),
-      Container(
-          padding: const EdgeInsets.fromLTRB(
-              12, 12, (_floatButtionSize - _floatButtionSmallSize) / 2, 12),
+      Padding(
+          padding: const EdgeInsets.only(
+            left: 18,
+            right: (_floatButtionSize - _floatButtionSmallSize) / 2,
+          ),
           child: SizedBox.fromSize(
               size: _buttonSize,
               child: FloatingActionButton(
