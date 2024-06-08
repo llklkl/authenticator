@@ -4,3 +4,6 @@
 /target
 /Cargo.lock
 .env/env.json
+dbs/
+src/frb_generated*
+logs

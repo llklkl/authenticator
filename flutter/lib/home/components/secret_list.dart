@@ -68,7 +68,7 @@ class _SecretListState extends State<SecretList>
     return Consumer<SecretListProvider>(builder: (context, provider, child) {
       return ListView.separated(
           controller: _scrollController,
-          itemCount: provider.length()+1,
+          itemCount: provider.length() + 1,
           separatorBuilder: (context, _) {
             return const Divider();
           },

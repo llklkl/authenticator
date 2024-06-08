@@ -15,18 +15,22 @@ dependencies:
   path:
   sqflite_common_ffi: any
   ffi:
-  cupertino_icons: ^1.0.2
-  flutter_rust_bridge: ^1.82.1
-  freezed_annotation: ^2.4.1
-  path_provider: ^2.1.1
+  cupertino_icons: ^1.0.0
+  flutter_rust_bridge: 2.0.0-dev.37
+  freezed_annotation: ^2.0.0
+  path_provider: ^2.0.0
+  rust_lib_authenticator:
+    path: rust_builder
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^2.0.0
+  flutter_lints: ^4.0.0
   ffigen:
   build_runner: ^2.4.6
-  freezed: ^2.4.3
+  freezed: ^2.0.0
+  integration_test:
+    sdk: flutter
 
 flutter:
   uses-material-design: true

@@ -1,14 +1,14 @@
+// The original content is temporarily commented out to allow generating a self-contained demo - feel free to uncomment later.
+
 import 'dart:io';
 
-import 'package:authenticator/ffi/bridge_gen.dart';
 import 'package:authenticator/home/main_page.dart';
 import 'package:authenticator/repo/dbhelper.dart';
 import 'package:flutter/material.dart';
-import 'package:path/path.dart' as path;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:path_provider/path_provider.dart';
-
-import 'ffi/ffi.dart' as ffi;
+import 'package:authenticator/src/rust/api/api.dart' as api;
+import 'package:authenticator/src/rust/frb_generated.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -17,27 +17,28 @@ void main() async {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
   }
+  await RustLib.init();
+
   await DBHelper.dbHelper.init();
   await initApp();
+
   runApp(const AuthenticatorApp());
 }
 
 Future<String> getDbPath() async {
   return getApplicationSupportDirectory().then((value) {
-    return path.join(value.path, "authenticator.db");
+    return value.toString();
   });
 }
 
 Future initApp() async {
-  return getDbPath().then((dbPath) {
-    ffi.Api.init(cfg: AppConfig(dbPath: dbPath));
-  });
+  var dataPath = await getDbPath();
+  api.init(dataPath: dataPath);
 }
 
 class AuthenticatorApp extends StatelessWidget {
   const AuthenticatorApp({super.key});
 
-  // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
     return MaterialApp(

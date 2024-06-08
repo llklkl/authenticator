@@ -6,7 +6,7 @@ import 'components/fab.dart';
 import 'model/secret.dart';
 import 'provider/secret_list.dart';
 
-import 'package:authenticator/ffi/ffi.dart';
+// import 'package:authenticator/ffi/ffi.dart';
 
 class MainPage extends StatefulWidget {
   const MainPage({super.key});
@@ -87,10 +87,10 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadMore();
     });
-    Api.info().then((value) {
-      name = value;
-      setState(() {});
-    });
+    // Api.info().then((value) {
+    //   name = value;
+    //   setState(() {});
+    // });
   }
 
   @override

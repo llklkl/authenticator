@@ -1,7 +1,3 @@
-// use crate::{
-//     encoding::alphabet,
-// };
-
 use super::alphabet;
 use crate::tools::encoding::DecodeError;
 
