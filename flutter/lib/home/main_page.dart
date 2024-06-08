@@ -78,7 +78,7 @@ class _MainPageState extends State<MainPage>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadMore();
     });
-    Api.hello().then((value) {
+    Api.info().then((value) {
       print("ffi: {$value}");
       name = value;
       setState(() {});

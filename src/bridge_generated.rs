@@ -20,16 +20,31 @@ use std::sync::Arc;
 
 // Section: imports
 
+use crate::app::app::AppConfig;
+
 // Section: wire functions
 
-fn wire_hello_impl(port_: MessagePort) {
-    FLUTTER_RUST_BRIDGE_HANDLER.wrap::<_, _, _, String, _>(
+fn wire_init_impl(port_: MessagePort, _cfg: impl Wire2Api<AppConfig> + UnwindSafe) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap::<_, _, _, (), _>(
         WrapInfo {
-            debug_name: "hello",
+            debug_name: "init",
             port: Some(port_),
             mode: FfiCallMode::Normal,
         },
-        move || move |task_callback| Result::<_, ()>::Ok(hello()),
+        move || {
+            let api__cfg = _cfg.wire2api();
+            move |task_callback| Result::<_, ()>::Ok(init(api__cfg))
+        },
+    )
+}
+fn wire_info_impl(port_: MessagePort) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap::<_, _, _, String, _>(
+        WrapInfo {
+            debug_name: "info",
+            port: Some(port_),
+            mode: FfiCallMode::Normal,
+        },
+        move || move |task_callback| Result::<_, ()>::Ok(info()),
     )
 }
 // Section: wrapper structs
@@ -54,6 +69,13 @@ where
         (!self.is_null()).then(|| self.wire2api())
     }
 }
+
+impl Wire2Api<u8> for u8 {
+    fn wire2api(self) -> u8 {
+        self
+    }
+}
+
 // Section: impl IntoDart
 
 // Section: executor
