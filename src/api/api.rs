@@ -1,15 +1,15 @@
 use flutter_rust_bridge::frb;
-use crate::app::app;
+use crate::app::app::App;
+use crate::app::errors;
 
 #[frb(init)]
 pub fn init_app() {}
 
-#[frb(sync)]
-pub fn init(data_path: String) {
-    app::App::init(data_path);
+pub async fn init(data_path: String) -> Result<(), errors::Error> {
+    App::init(data_path).await
 }
 
 #[frb(sync)]
 pub fn appinfo(name: String) -> String {
-    format!("Hello, {name}!")
+    format!("Hello, {name}! dbname: {}", App::instance().appinfo())
 }

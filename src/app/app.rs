@@ -1,10 +1,13 @@
 use std::sync::Once;
 use std::path::Path;
 
-use crate::app::repo;
+use crate::app::{errors, repo};
+use crate::app::repo::Repo;
 
 pub struct App {
     _cfg: AppConfig,
+
+    repo: Option<Repo>,
 }
 
 pub struct AppConfig {
@@ -26,20 +29,30 @@ static ONCE: Once = Once::new();
 impl App {
     fn from(app_config: AppConfig) -> Self {
         App {
-            _cfg: app_config
+            _cfg: app_config,
+            repo: None,
         }
     }
 
-    pub fn init(data_path: String) {
+    pub async fn init(data_path: String) -> Result<(), errors::Error> {
         unsafe {
             ONCE.call_once(|| {
                 APP = Some(App::from(AppConfig::new(data_path)));
             });
         }
+
+        let app: &mut App = Self::instance();
+
+        app.repo = Some(Repo::new(app._cfg.db_path.clone(), false).await?);
+
+        let repo = app.repo.as_ref().unwrap();
+        repo.migrate().await?;
+
+        Ok(())
     }
 
-    pub fn instance() -> &'static App {
-        unsafe { APP.as_ref().unwrap() }
+    pub fn instance() -> &'static mut App {
+        unsafe { APP.as_mut().unwrap() }
     }
 
     pub fn appinfo(&self) -> String {

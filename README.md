@@ -65,3 +65,10 @@ vscode 可以在 `launch.json` 文件夹中加上 `--dart-define-from-file`：
     ]
 }
 ```
+
+## database生成
+
+```shell
+export DATABASE_URL='sqlite:./migration/authenticator.db?mode=rwc'
+sea-orm-cli migrate up
+```

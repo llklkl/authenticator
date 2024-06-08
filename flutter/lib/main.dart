@@ -22,18 +22,20 @@ void main() async {
   await DBHelper.dbHelper.init();
   await initApp();
 
+  print(api.appinfo(name: "hello"));
+
   runApp(const AuthenticatorApp());
 }
 
 Future<String> getDbPath() async {
   return getApplicationSupportDirectory().then((value) {
-    return value.toString();
+    return value.path;
   });
 }
 
-Future initApp() async {
+Future<void> initApp() async {
   var dataPath = await getDbPath();
-  api.init(dataPath: dataPath);
+  return api.init(dataPath: dataPath);
 }
 
 class AuthenticatorApp extends StatelessWidget {
