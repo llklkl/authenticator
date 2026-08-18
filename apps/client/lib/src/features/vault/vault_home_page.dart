@@ -1,9 +1,12 @@
 import 'dart:async';
 
 import 'package:authenticator_vault/src/features/security/platform_security_service.dart';
+import 'package:authenticator_vault/src/features/vault/desktop_title_bar.dart';
 import 'package:authenticator_vault/src/features/vault/vault_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+
+enum _VaultSection { passwords, otp, other }
 
 class VaultHomePage extends StatefulWidget {
   const VaultHomePage({required this.vaultService, super.key});
@@ -18,15 +21,23 @@ class _VaultHomePageState extends State<VaultHomePage>
     with WidgetsBindingObserver {
   final _handles = <String, BigInt>{};
   final _entries = <String, List<VaultEntryItem>>{};
+  final _contents = <String, VaultContent>{};
+  final _selectedGroups = <String, String>{};
   final _codes = <String, OtpValue>{};
   final _searchController = TextEditingController();
   List<WorkspaceInfo> _workspaces = [];
   String? _selectedId;
   String _query = '';
+  String? _selectedEntryId;
+  String? _revealedPassword;
+  _VaultSection _section = _VaultSection.passwords;
+  double _treeWidth = 260;
+  double _listFraction = 0.58;
   bool _loading = true;
   bool _privacyOverlay = false;
   Object? _loadError;
   Timer? _ticker;
+  Timer? _passwordHideTimer;
   Stopwatch? _backgroundElapsed;
   StreamSubscription<void>? _screenOffSubscription;
   late final SecurityCoordinator _securityCoordinator;
@@ -42,6 +53,17 @@ class _VaultHomePageState extends State<VaultHomePage>
   BigInt? get _selectedHandle => _handles[_selectedId];
   List<VaultEntryItem> get _selectedEntries =>
       _entries[_selectedId] ?? const [];
+  VaultContent? get _selectedContent => _contents[_selectedId];
+  String? get _selectedGroupId => _selectedId == null
+      ? null
+      : _selectedGroups[_selectedId!] ?? _selectedContent?.rootGroupId;
+  VaultEntryItem? get _selectedEntry => _selectedEntries
+      .where((entry) => entry.id == _selectedEntryId)
+      .firstOrNull;
+  StructuredVaultService? get _structuredService =>
+      widget.vaultService is StructuredVaultService
+      ? widget.vaultService as StructuredVaultService
+      : null;
 
   @override
   void initState() {
@@ -61,6 +83,7 @@ class _VaultHomePageState extends State<VaultHomePage>
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.hidden ||
         state == AppLifecycleState.detached) {
+      _hidePassword();
       _backgroundElapsed ??= Stopwatch()..start();
       if (mounted) setState(() => _privacyOverlay = true);
       unawaited(_securityCoordinator.setBackgrounded(true));
@@ -89,6 +112,7 @@ class _VaultHomePageState extends State<VaultHomePage>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _ticker?.cancel();
+    _passwordHideTimer?.cancel();
     unawaited(_screenOffSubscription?.cancel());
     _searchController.dispose();
     unawaited(widget.vaultService.lockAll());
@@ -135,6 +159,7 @@ class _VaultHomePageState extends State<VaultHomePage>
         _entries[unlocked.workspace.id] = [];
       });
       await _securityCoordinator.setUnlockedCount(_handles.length);
+      await _refreshEntries();
     }, success: 'Workspace 已创建，本地文件使用 KDBX 4.1 加密。');
   }
 
@@ -151,14 +176,14 @@ class _VaultHomePageState extends State<VaultHomePage>
         request.path,
         request.password,
       );
-      final entries = await widget.vaultService.listEntries(unlocked.handleId);
       setState(() {
         _workspaces = [..._workspaces, unlocked.workspace];
         _selectedId = unlocked.workspace.id;
         _handles[unlocked.workspace.id] = unlocked.handleId;
-        _entries[unlocked.workspace.id] = entries;
+        _entries[unlocked.workspace.id] = [];
       });
       await _securityCoordinator.setUnlockedCount(_handles.length);
+      await _refreshEntries();
       await _refreshOtp();
     }, success: 'KDBX Workspace 已导入。');
   }
@@ -172,12 +197,11 @@ class _VaultHomePageState extends State<VaultHomePage>
     if (password == null || !mounted) return;
     await _guarded(() async {
       final handle = await widget.vaultService.unlock(workspace, password);
-      final entries = await widget.vaultService.listEntries(handle);
       setState(() {
         _handles[workspace.id] = handle;
-        _entries[workspace.id] = entries;
       });
       await _securityCoordinator.setUnlockedCount(_handles.length);
+      await _refreshEntries();
       await _refreshOtp();
     });
   }
@@ -188,7 +212,11 @@ class _VaultHomePageState extends State<VaultHomePage>
     setState(() {
       _handles.clear();
       _entries.clear();
+      _contents.clear();
       _codes.clear();
+      _passwordHideTimer?.cancel();
+      _passwordHideTimer = null;
+      _revealedPassword = null;
     });
     await _securityCoordinator.setUnlockedCount(0);
   }
@@ -197,9 +225,27 @@ class _VaultHomePageState extends State<VaultHomePage>
     final handle = _selectedHandle;
     final workspace = _selected;
     if (handle == null || workspace == null) return;
-    final entries = await widget.vaultService.listEntries(handle);
+    final structured = _structuredService;
+    final content = structured == null
+        ? null
+        : await structured.content(handle);
+    final entries =
+        content?.entries ?? await widget.vaultService.listEntries(handle);
     if (!mounted || handle != _handles[workspace.id]) return;
-    setState(() => _entries[workspace.id] = entries);
+    setState(() {
+      _entries[workspace.id] = entries;
+      if (content != null) {
+        _contents[workspace.id] = content;
+        _selectedGroups.putIfAbsent(workspace.id, () => content.rootGroupId);
+      }
+      if (_selectedEntryId != null &&
+          !entries.any((entry) => entry.id == _selectedEntryId)) {
+        _selectedEntryId = null;
+        _passwordHideTimer?.cancel();
+        _passwordHideTimer = null;
+        _revealedPassword = null;
+      }
+    });
     await _refreshOtp();
   }
 
@@ -237,7 +283,13 @@ class _VaultHomePageState extends State<VaultHomePage>
     );
     if (draft == null || !mounted) return;
     await _guarded(() async {
-      await widget.vaultService.createEntry(handle, draft);
+      final groupId = _selectedGroupId;
+      final structured = _structuredService;
+      if (structured != null && groupId != null) {
+        await structured.createEntryInGroup(handle, groupId, draft);
+      } else {
+        await widget.vaultService.createEntry(handle, draft);
+      }
       await _refreshEntries();
     }, success: '条目已保存。');
   }
@@ -322,10 +374,52 @@ class _VaultHomePageState extends State<VaultHomePage>
   Future<void> _deleteEntry(VaultEntryItem item) async {
     final handle = _selectedHandle;
     if (handle == null) return;
+    final content = _selectedContent;
+    final structured = _structuredService;
+    if (structured != null && !item.isInRecycleBin) {
+      if (content?.recycleBinEnabled == true) {
+        await _guarded(() async {
+          await structured.trashEntry(handle, item.id);
+          await _refreshEntries();
+        }, success: '条目已移至回收站。');
+        return;
+      }
+      final action = await _sensitiveDialog<String>(
+        builder: (context) => AlertDialog(
+          title: const Text('此 Workspace 未启用回收站'),
+          content: const Text('可以先启用回收站并安全删除，或永久删除此条目。'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('取消'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, 'permanent'),
+              child: const Text('永久删除'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, 'enable'),
+              child: const Text('启用并移入回收站'),
+            ),
+          ],
+        ),
+      );
+      if (action == null || !mounted) return;
+      await _guarded(() async {
+        if (action == 'enable') {
+          await structured.enableRecycleBin(handle);
+          await structured.trashEntry(handle, item.id);
+        } else {
+          await widget.vaultService.deleteEntry(handle, item.id);
+        }
+        await _refreshEntries();
+      });
+      return;
+    }
     final confirmed = await _sensitiveDialog<bool>(
       builder: (context) => AlertDialog(
-        title: const Text('删除条目？'),
-        content: Text('“${item.title}”会从 Vault 删除，并写入 KDBX 删除记录。'),
+        title: const Text('永久删除条目？'),
+        content: Text('“${item.title}”将无法从回收站恢复。'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -333,7 +427,7 @@ class _VaultHomePageState extends State<VaultHomePage>
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('删除'),
+            child: const Text('永久删除'),
           ),
         ],
       ),
@@ -367,6 +461,287 @@ class _VaultHomePageState extends State<VaultHomePage>
           ],
         ),
       );
+    });
+  }
+
+  Future<void> _togglePassword(VaultEntryItem item) async {
+    if (_revealedPassword != null) {
+      _hidePassword();
+      return;
+    }
+    final handle = _selectedHandle;
+    if (handle == null) return;
+    await _guarded(() async {
+      final password = await widget.vaultService.revealPassword(
+        handle,
+        item.id,
+      );
+      if (!mounted || _selectedEntryId != item.id) return;
+      _passwordHideTimer?.cancel();
+      setState(() => _revealedPassword = password);
+      _passwordHideTimer = Timer(const Duration(seconds: 30), _hidePassword);
+    });
+  }
+
+  void _hidePassword() {
+    _passwordHideTimer?.cancel();
+    _passwordHideTimer = null;
+    if (_revealedPassword == null) return;
+    if (mounted) {
+      setState(() => _revealedPassword = null);
+    } else {
+      _revealedPassword = null;
+    }
+  }
+
+  Future<void> _selectWorkspace(String id) async {
+    if (_selectedId == id) return;
+    _hidePassword();
+    setState(() {
+      _selectedId = id;
+      _selectedEntryId = null;
+    });
+    if (_handles.containsKey(id) &&
+        (!_entries.containsKey(id) ||
+            (_structuredService != null && !_contents.containsKey(id)))) {
+      await _refreshEntries();
+    } else {
+      await _refreshOtp();
+    }
+  }
+
+  void _selectGroup(String groupId) {
+    final workspaceId = _selectedId;
+    if (workspaceId == null) return;
+    _hidePassword();
+    setState(() {
+      _selectedGroups[workspaceId] = groupId;
+      _selectedEntryId = null;
+    });
+  }
+
+  void _selectEntry(VaultEntryItem item) {
+    _hidePassword();
+    setState(() => _selectedEntryId = item.id);
+  }
+
+  Future<String?> _askName(String title, {String initial = ''}) async {
+    final controller = TextEditingController(text: initial);
+    final value = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: '名称'),
+          onSubmitted: (value) => Navigator.pop(context, value),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text),
+            child: const Text('确定'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    return value?.trim();
+  }
+
+  Future<void> _createFolder([String? parentId]) async {
+    final handle = _selectedHandle;
+    final structured = _structuredService;
+    final parent = parentId ?? _selectedGroupId;
+    if (handle == null || structured == null || parent == null) return;
+    final name = await _askName('新建文件夹');
+    if (name == null || name.isEmpty || !mounted) return;
+    await _guarded(() async {
+      final id = await structured.createGroup(handle, parent, name);
+      await _refreshEntries();
+      _selectGroup(id);
+    });
+  }
+
+  Future<void> _renameFolder(VaultGroupItem group) async {
+    final handle = _selectedHandle;
+    final structured = _structuredService;
+    if (handle == null || structured == null) return;
+    final name = await _askName('重命名文件夹', initial: group.name);
+    if (name == null || name.isEmpty || !mounted) return;
+    await _guarded(() async {
+      await structured.renameGroup(handle, group.id, name);
+      await _refreshEntries();
+    });
+  }
+
+  Future<void> _trashFolder(VaultGroupItem group) async {
+    final handle = _selectedHandle;
+    final structured = _structuredService;
+    if (handle == null || structured == null) return;
+    await _guarded(() async {
+      await structured.trashGroup(handle, group.id);
+      _selectedGroups[_selectedId!] = _selectedContent!.rootGroupId;
+      await _refreshEntries();
+    }, success: '文件夹已移至回收站。');
+  }
+
+  Future<void> _moveFolderTo(VaultGroupItem group) async {
+    final handle = _selectedHandle;
+    final structured = _structuredService;
+    final content = _selectedContent;
+    if (handle == null || structured == null || content == null) return;
+    final descendants = _descendantGroupIds(group.id);
+    final candidates = content.groups
+        .where(
+          (candidate) =>
+              !candidate.isRecycleBin &&
+              !descendants.contains(candidate.id) &&
+              !_isInsideRecycle(candidate.id),
+        )
+        .toList(growable: false);
+    final destination = await showDialog<String>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('移动文件夹到…'),
+        children: [
+          for (final candidate in candidates)
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, candidate.id),
+              child: Text(_groupPath(candidate.id)),
+            ),
+        ],
+      ),
+    );
+    if (destination == null || !mounted) return;
+    await _guarded(() async {
+      await structured.moveGroup(handle, group.id, destination);
+      await _refreshEntries();
+    });
+  }
+
+  Future<void> _restoreEntry(VaultEntryItem entry) async {
+    final handle = _selectedHandle;
+    final structured = _structuredService;
+    if (handle == null || structured == null) return;
+    await _guarded(() async {
+      await structured.restoreEntry(handle, entry.id);
+      await _refreshEntries();
+    }, success: '条目已恢复。');
+  }
+
+  Future<void> _restoreFolder(VaultGroupItem group) async {
+    final handle = _selectedHandle;
+    final structured = _structuredService;
+    if (handle == null || structured == null) return;
+    await _guarded(() async {
+      await structured.restoreGroup(handle, group.id);
+      await _refreshEntries();
+    }, success: '文件夹已恢复。');
+  }
+
+  Future<void> _deleteFolderPermanently(VaultGroupItem group) async {
+    final handle = _selectedHandle;
+    final structured = _structuredService;
+    if (handle == null || structured == null) return;
+    await _guarded(() async {
+      await structured.permanentlyDeleteGroup(handle, group.id);
+      _selectedGroups[_selectedId!] = _selectedContent!.rootGroupId;
+      await _refreshEntries();
+    });
+  }
+
+  Future<void> _moveEntryTo(VaultEntryItem entry) async {
+    final handle = _selectedHandle;
+    final structured = _structuredService;
+    final content = _selectedContent;
+    if (handle == null || structured == null || content == null) return;
+    final candidates = content.groups
+        .where((group) => !group.isRecycleBin && !_isInsideRecycle(group.id))
+        .toList(growable: false);
+    final destination = await showDialog<String>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('移动到…'),
+        children: [
+          for (final group in candidates)
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, group.id),
+              child: Text(_groupPath(group.id)),
+            ),
+        ],
+      ),
+    );
+    if (destination == null || !mounted) return;
+    await _guarded(() async {
+      await structured.moveEntry(handle, entry.id, destination);
+      await _refreshEntries();
+    });
+  }
+
+  bool _isInsideRecycle(String groupId) {
+    final content = _selectedContent;
+    final recycleId = content?.recycleBinId;
+    if (content == null || recycleId == null) return false;
+    var current = content.groups
+        .where((group) => group.id == groupId)
+        .firstOrNull;
+    while (current != null) {
+      if (current.id == recycleId) return true;
+      final parentId = current.parentId;
+      current = parentId == null
+          ? null
+          : content.groups.where((group) => group.id == parentId).firstOrNull;
+    }
+    return false;
+  }
+
+  String _groupPath(String groupId) {
+    final content = _selectedContent;
+    if (content == null) return '';
+    final names = <String>[];
+    var current = content.groups
+        .where((group) => group.id == groupId)
+        .firstOrNull;
+    while (current != null) {
+      names.add(current.name);
+      final parentId = current.parentId;
+      current = parentId == null
+          ? null
+          : content.groups.where((group) => group.id == parentId).firstOrNull;
+    }
+    return names.reversed.join(' / ');
+  }
+
+  Future<void> _emptyRecycleBin() async {
+    final handle = _selectedHandle;
+    final structured = _structuredService;
+    if (handle == null || structured == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('清空回收站？'),
+        content: const Text('其中的文件夹和条目都将永久删除。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('清空'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    await _guarded(() async {
+      await structured.emptyRecycleBin(handle);
+      await _refreshEntries();
     });
   }
 
@@ -422,6 +797,7 @@ class _VaultHomePageState extends State<VaultHomePage>
         }
       });
       await _securityCoordinator.setUnlockedCount(_handles.length);
+      await _refreshEntries();
       await _refreshOtp();
       if (outcome.failedIds.isNotEmpty && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -501,40 +877,42 @@ class _VaultHomePageState extends State<VaultHomePage>
       );
     }
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Authenticator Vault'),
-        actions: [
-          IconButton(
-            onPressed: _securityService == null || _selected == null
-                ? null
-                : _showSecuritySettings,
-            tooltip: '安全设置',
-            icon: const Icon(Icons.security_outlined),
-          ),
-          IconButton(
-            onPressed: _handles.isEmpty ? null : _lockAll,
-            tooltip: '锁定全部 Workspace',
-            icon: const Icon(Icons.lock_outline),
-          ),
-          const SizedBox(width: 8),
-        ],
-      ),
       body: Stack(
         children: [
-          LayoutBuilder(
-            builder: (context, constraints) {
-              if (_workspaces.isEmpty) return _buildWelcome();
-              if (constraints.maxWidth >= 800) {
-                return Row(
-                  children: [
-                    _buildRail(),
-                    const VerticalDivider(width: 1),
-                    Expanded(child: _buildWorkspace()),
-                  ],
-                );
-              }
-              return _buildWorkspace(showPicker: true);
-            },
+          Column(
+            children: [
+              DesktopTitleBar(
+                leading: _buildWorkspaceSwitcher(),
+                search: _workspaces.isEmpty || _selectedHandle == null
+                    ? const SizedBox()
+                    : _buildSearchField(),
+                actions: [
+                  IconButton(
+                    onPressed: _securityService == null || _selected == null
+                        ? null
+                        : _showSecuritySettings,
+                    tooltip: '安全设置',
+                    icon: const Icon(Icons.security_outlined, size: 20),
+                  ),
+                  IconButton(
+                    onPressed: _handles.isEmpty ? null : _lockAll,
+                    tooltip: '锁定全部 Workspace',
+                    icon: const Icon(Icons.lock_outline, size: 20),
+                  ),
+                ],
+              ),
+              Expanded(
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    if (_workspaces.isEmpty) return _buildWelcome();
+                    if (constraints.maxWidth >= 900) {
+                      return _buildDesktopWorkspace(constraints);
+                    }
+                    return _buildMobileWorkspace();
+                  },
+                ),
+              ),
+            ],
           ),
           if (_privacyOverlay)
             const Positioned.fill(
@@ -588,118 +966,106 @@ class _VaultHomePageState extends State<VaultHomePage>
     ),
   );
 
-  Widget _buildRail() {
-    final index = _workspaces.indexWhere(
-      (workspace) => workspace.id == _selectedId,
-    );
-    return NavigationRail(
-      selectedIndex: index < 0 ? 0 : index,
-      labelType: NavigationRailLabelType.all,
-      leading: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 16),
-        child: PopupMenuButton<String>(
-          tooltip: '添加 Workspace',
-          icon: const Icon(Icons.add_circle_outline),
-          onSelected: (value) =>
-              value == 'create' ? _createWorkspace() : _importWorkspace(),
-          itemBuilder: (_) => const [
-            PopupMenuItem(value: 'create', child: Text('新建 Workspace')),
-            PopupMenuItem(value: 'import', child: Text('导入 KDBX')),
+  Widget _buildWorkspaceSwitcher() => PopupMenuButton<String>(
+    tooltip: '切换 Workspace',
+    onSelected: (value) {
+      if (value == '__create') {
+        _createWorkspace();
+      } else if (value == '__import') {
+        _importWorkspace();
+      } else {
+        _selectWorkspace(value);
+      }
+    },
+    itemBuilder: (_) => [
+      for (final workspace in _workspaces)
+        PopupMenuItem(
+          value: workspace.id,
+          child: Row(
+            children: [
+              Icon(
+                _handles.containsKey(workspace.id)
+                    ? Icons.lock_open_outlined
+                    : Icons.lock_outline,
+                size: 18,
+              ),
+              const SizedBox(width: 10),
+              Flexible(child: Text(workspace.name)),
+              if (workspace.id == _selectedId) ...[
+                const Spacer(),
+                const Icon(Icons.check, size: 18),
+              ],
+            ],
+          ),
+        ),
+      const PopupMenuDivider(),
+      const PopupMenuItem(value: '__create', child: Text('＋ 新建 Workspace')),
+      const PopupMenuItem(value: '__import', child: Text('导入 KDBX…')),
+    ],
+    child: ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 230),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.shield_outlined, size: 21),
+            const SizedBox(width: 9),
+            Flexible(
+              child: Text(
+                _selected?.name ?? 'Authenticator Vault',
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ),
+            const Icon(Icons.expand_more, size: 18),
           ],
         ),
       ),
-      onDestinationSelected: (value) =>
-          setState(() => _selectedId = _workspaces[value].id),
-      destinations: [
-        for (final workspace in _workspaces)
-          NavigationRailDestination(
-            icon: Icon(
-              _handles.containsKey(workspace.id)
-                  ? Icons.lock_open
-                  : Icons.lock_outline,
-            ),
-            label: Text(workspace.name),
+    ),
+  );
+
+  Widget _buildDesktopWorkspace(BoxConstraints constraints) {
+    final workspace = _selected;
+    if (workspace == null) return const SizedBox();
+    if (_selectedHandle == null) {
+      return _LockedWorkspace(
+        workspace: workspace,
+        onUnlock: _unlock,
+        onQuickUnlock: workspace.quickUnlockEnabled ? _quickUnlock : null,
+      );
+    }
+    final safeTreeWidth = _treeWidth.clamp(220.0, 360.0);
+    return Row(
+      children: [
+        SizedBox(width: safeTreeWidth, child: _buildFolderPane()),
+        MouseRegion(
+          cursor: SystemMouseCursors.resizeColumn,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onHorizontalDragUpdate: (details) => setState(() {
+              _treeWidth = (_treeWidth + details.delta.dx).clamp(220, 360);
+            }),
+            child: const SizedBox(width: 5, child: VerticalDivider(width: 1)),
           ),
+        ),
+        Expanded(child: _buildDesktopContent()),
       ],
     );
   }
 
-  Widget _buildWorkspace({bool showPicker = false}) {
-    final workspace = _selected;
-    if (workspace == null) return const SizedBox();
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            if (showPicker) ...[
-              DropdownButtonFormField<String>(
-                initialValue: workspace.id,
-                decoration: const InputDecoration(labelText: 'Workspace'),
-                items: [
-                  for (final item in _workspaces)
-                    DropdownMenuItem(value: item.id, child: Text(item.name)),
-                ],
-                onChanged: (value) => setState(() => _selectedId = value),
-              ),
-              const SizedBox(height: 16),
-            ] else
-              Text(
-                workspace.name,
-                style: Theme.of(context).textTheme.headlineSmall,
-              ),
-            const SizedBox(height: 16),
-            if (_selectedHandle == null)
-              Expanded(
-                child: _LockedWorkspace(
-                  workspace: workspace,
-                  onUnlock: _unlock,
-                  onQuickUnlock: workspace.quickUnlockEnabled
-                      ? _quickUnlock
-                      : null,
-                ),
-              )
-            else ...[
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  if (constraints.maxWidth < 620) {
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        _buildSearchField(),
-                        const SizedBox(height: 10),
-                        Align(
-                          alignment: Alignment.centerRight,
-                          child: _buildEntryActions(),
-                        ),
-                      ],
-                    );
-                  }
-                  return Row(
-                    children: [
-                      Expanded(child: _buildSearchField()),
-                      const SizedBox(width: 12),
-                      _buildEntryActions(),
-                    ],
-                  );
-                },
-              ),
-              const SizedBox(height: 20),
-              Expanded(child: _buildEntryList()),
-            ],
-          ],
-        ),
+  Widget _buildSearchField() => SizedBox(
+    height: 34,
+    child: TextField(
+      controller: _searchController,
+      onChanged: (value) => setState(() => _query = value),
+      decoration: const InputDecoration(
+        hintText: '搜索当前 Workspace',
+        prefixIcon: Icon(Icons.search, size: 19),
+        contentPadding: EdgeInsets.symmetric(horizontal: 10),
+        border: OutlineInputBorder(borderSide: BorderSide.none),
+        filled: true,
       ),
-    );
-  }
-
-  Widget _buildSearchField() => TextField(
-    controller: _searchController,
-    onChanged: (value) => setState(() => _query = value),
-    decoration: const InputDecoration(
-      hintText: '搜索标题、账号或标签',
-      prefixIcon: Icon(Icons.search),
     ),
   );
 
@@ -715,22 +1081,14 @@ class _VaultHomePageState extends State<VaultHomePage>
           PopupMenuItem(value: EntryType.recoveryCodes, child: Text('恢复码')),
           PopupMenuItem(value: EntryType.secureNote, child: Text('安全笔记')),
         ],
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.primary,
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Text(
-            '＋ 新增',
-            style: TextStyle(color: Theme.of(context).colorScheme.onPrimary),
-          ),
+        child: const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 8),
+          child: Row(children: [Icon(Icons.add, size: 19), Text('新增')]),
         ),
       ),
-      const SizedBox(width: 8),
-      OutlinedButton.icon(
+      TextButton.icon(
         onPressed: _importOtp,
-        icon: const Icon(Icons.qr_code_2),
+        icon: const Icon(Icons.qr_code_2, size: 19),
         label: const Text('导入 OTP'),
       ),
       IconButton(
@@ -741,75 +1099,571 @@ class _VaultHomePageState extends State<VaultHomePage>
     ],
   );
 
-  Widget _buildEntryList() {
+  List<VaultEntryItem> _visibleEntries() {
     final query = _query.trim().toLowerCase();
-    final visible = _selectedEntries.where((entry) {
-      return query.isEmpty ||
-          entry.title.toLowerCase().contains(query) ||
-          entry.username.toLowerCase().contains(query) ||
-          entry.tags.any((tag) => tag.toLowerCase().contains(query));
-    }).toList();
-    if (visible.isEmpty) {
-      return Center(
-        child: Text(query.isEmpty ? '这个 Workspace 还是空的' : '没有匹配的条目'),
-      );
+    final selectedGroup = _selectedGroupId;
+    final scopedGroups = selectedGroup == null
+        ? <String>{}
+        : _descendantGroupIds(selectedGroup);
+    final selectedIsRecycle =
+        selectedGroup != null && _isInsideRecycle(selectedGroup);
+    final visible =
+        _selectedEntries.where((entry) {
+          final typeMatches = switch (_section) {
+            _VaultSection.passwords =>
+              entry.hasPassword || entry.type == EntryType.login,
+            _VaultSection.otp => entry.hasOtp,
+            _VaultSection.other =>
+              entry.type == EntryType.recoveryCodes ||
+                  entry.type == EntryType.secureNote,
+          };
+          final folderMatches = query.isNotEmpty
+              ? entry.isInRecycleBin == selectedIsRecycle
+              : (scopedGroups.isEmpty ||
+                        scopedGroups.contains(entry.groupId)) &&
+                    entry.isInRecycleBin == selectedIsRecycle;
+          final textMatches =
+              query.isEmpty ||
+              entry.title.toLowerCase().contains(query) ||
+              entry.username.toLowerCase().contains(query) ||
+              entry.url.toLowerCase().contains(query) ||
+              entry.tags.any((tag) => tag.toLowerCase().contains(query));
+          return typeMatches && folderMatches && textMatches;
+        }).toList()..sort(
+          (a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()),
+        );
+    return visible;
+  }
+
+  Set<String> _descendantGroupIds(String rootId) {
+    final groups = _selectedContent?.groups ?? const <VaultGroupItem>[];
+    final result = <String>{rootId};
+    var changed = true;
+    while (changed) {
+      changed = false;
+      for (final group in groups) {
+        if (group.parentId != null &&
+            result.contains(group.parentId) &&
+            result.add(group.id)) {
+          changed = true;
+        }
+      }
     }
-    return ListView.separated(
-      itemCount: visible.length,
-      separatorBuilder: (_, _) => const SizedBox(height: 10),
-      itemBuilder: (_, index) {
-        final item = visible[index];
-        final otp = _codes[item.id];
-        return Card(
-          child: ListTile(
-            leading: CircleAvatar(child: Icon(_iconFor(item.type))),
-            title: Text(item.title),
-            subtitle: Text(
-              item.username.isEmpty ? _labelFor(item.type) : item.username,
-            ),
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
+    return result;
+  }
+
+  Widget _buildFolderPane() {
+    final content = _selectedContent;
+    if (content == null) return const SizedBox();
+    final root = content.groups.where((group) => group.isRoot).firstOrNull;
+    return ColoredBox(
+      color: Theme.of(context).colorScheme.surfaceContainerLow,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 12, 8, 6),
+            child: Row(
               children: [
-                if (otp != null) ...[
-                  Text(
-                    otp.code,
-                    style: Theme.of(context).textTheme.titleLarge
-                        ?.copyWith(letterSpacing: 3),
-                  ),
-                  IconButton(
-                    onPressed: () => _copy(otp.code),
-                    icon: const Icon(Icons.copy_outlined),
-                  ),
-                ],
-                PopupMenuButton<String>(
-                  onSelected: (action) {
-                    switch (action) {
-                      case 'password':
-                        _reveal(item, false);
-                      case 'notes':
-                        _reveal(item, true);
-                      case 'edit':
-                        _editEntry(item);
-                      case 'delete':
-                        _deleteEntry(item);
-                    }
-                  },
-                  itemBuilder: (_) => [
-                    if (item.hasPassword)
-                      const PopupMenuItem(
-                        value: 'password',
-                        child: Text('显示密码'),
-                      ),
-                    const PopupMenuItem(value: 'notes', child: Text('显示受保护内容')),
-                    const PopupMenuItem(value: 'edit', child: Text('编辑')),
-                    const PopupMenuItem(value: 'delete', child: Text('删除')),
-                  ],
+                Text('文件夹', style: Theme.of(context).textTheme.labelLarge),
+                const Spacer(),
+                IconButton(
+                  onPressed: _structuredService == null ? null : _createFolder,
+                  tooltip: '新建文件夹',
+                  icon: const Icon(Icons.create_new_folder_outlined, size: 19),
                 ),
               ],
             ),
           ),
-        );
-      },
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.symmetric(horizontal: 6),
+              children: [if (root != null) ..._folderRows(root, 0)],
+            ),
+          ),
+          const Divider(height: 1),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(14, 10, 14, 4),
+            child: Text('搜索与标签', style: TextStyle(fontSize: 12)),
+          ),
+          _folderShortcut(Icons.list_alt_outlined, '所有条目', content.rootGroupId),
+          _folderShortcut(Icons.password_outlined, '含密码', content.rootGroupId),
+          const SizedBox(height: 8),
+        ],
+      ),
+    );
+  }
+
+  List<Widget> _folderRows(VaultGroupItem group, int depth) {
+    final content = _selectedContent!;
+    final children = content.groups
+        .where((item) => item.parentId == group.id)
+        .toList(growable: false);
+    final selected = _selectedGroupId == group.id;
+    final inRecycle = _isInsideRecycle(group.id);
+    return [
+      Material(
+        color: selected
+            ? Theme.of(context).colorScheme.secondaryContainer
+            : Colors.transparent,
+        borderRadius: BorderRadius.circular(7),
+        child: InkWell(
+          onTap: () => _selectGroup(group.id),
+          borderRadius: BorderRadius.circular(7),
+          child: SizedBox(
+            height: 36,
+            child: Row(
+              children: [
+                SizedBox(width: 8.0 + depth * 16),
+                Icon(
+                  group.isRecycleBin
+                      ? Icons.delete_outline
+                      : group.isRoot
+                      ? Icons.folder_special_outlined
+                      : Icons.folder_outlined,
+                  size: 19,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(group.name, overflow: TextOverflow.ellipsis),
+                ),
+                if (!group.isRoot && !group.isRecycleBin)
+                  PopupMenuButton<String>(
+                    padding: EdgeInsets.zero,
+                    iconSize: 17,
+                    onSelected: (action) {
+                      if (action == 'new') _createFolder(group.id);
+                      if (action == 'rename') _renameFolder(group);
+                      if (action == 'move') _moveFolderTo(group);
+                      if (action == 'trash') _trashFolder(group);
+                      if (action == 'restore') _restoreFolder(group);
+                      if (action == 'delete') _deleteFolderPermanently(group);
+                    },
+                    itemBuilder: (_) => inRecycle
+                        ? const [
+                            PopupMenuItem(value: 'restore', child: Text('恢复')),
+                            PopupMenuItem(value: 'delete', child: Text('永久删除')),
+                          ]
+                        : const [
+                            PopupMenuItem(value: 'new', child: Text('新建子文件夹')),
+                            PopupMenuItem(value: 'rename', child: Text('重命名')),
+                            PopupMenuItem(value: 'move', child: Text('移动到…')),
+                            PopupMenuItem(value: 'trash', child: Text('移至回收站')),
+                          ],
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+      for (final child in children) ..._folderRows(child, depth + 1),
+      if (group.isRecycleBin && selected)
+        TextButton.icon(
+          onPressed: _emptyRecycleBin,
+          icon: const Icon(Icons.delete_sweep_outlined, size: 18),
+          label: const Text('清空回收站'),
+        ),
+    ];
+  }
+
+  Widget _folderShortcut(IconData icon, String label, String groupId) =>
+      ListTile(
+        dense: true,
+        visualDensity: VisualDensity.compact,
+        leading: Icon(icon, size: 18),
+        title: Text(label),
+        onTap: () => _selectGroup(groupId),
+      );
+
+  Widget _buildDesktopContent() => Column(
+    children: [
+      _buildSectionBar(),
+      const Divider(height: 1),
+      Expanded(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final listHeight = (constraints.maxHeight * _listFraction).clamp(
+              180.0,
+              constraints.maxHeight - 150,
+            );
+            return Column(
+              children: [
+                SizedBox(height: listHeight, child: _buildEntryTable()),
+                MouseRegion(
+                  cursor: SystemMouseCursors.resizeRow,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onVerticalDragUpdate: (details) => setState(() {
+                      _listFraction =
+                          (_listFraction +
+                                  details.delta.dy / constraints.maxHeight)
+                              .clamp(.3, .78);
+                    }),
+                    child: const SizedBox(
+                      height: 7,
+                      child: Divider(height: 1, thickness: 1),
+                    ),
+                  ),
+                ),
+                Expanded(child: _buildDetailPane()),
+              ],
+            );
+          },
+        ),
+      ),
+    ],
+  );
+
+  void _setSection(_VaultSection section) {
+    _hidePassword();
+    setState(() {
+      _section = section;
+      _selectedEntryId = null;
+    });
+  }
+
+  Widget _sectionChoices() => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      for (final section in _VaultSection.values)
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 2),
+          child: ChoiceChip(
+            label: Text(switch (section) {
+              _VaultSection.passwords => '密码',
+              _VaultSection.otp => 'OTP',
+              _VaultSection.other => '其他',
+            }),
+            selected: _section == section,
+            onSelected: (_) => _setSection(section),
+            showCheckmark: false,
+            visualDensity: VisualDensity.compact,
+          ),
+        ),
+    ],
+  );
+
+  Widget _buildSectionBar({bool mobile = false}) => SizedBox(
+    height: mobile ? 88 : 48,
+    child: mobile
+        ? Column(
+            children: [
+              SizedBox(
+                height: 42,
+                child: Row(
+                  children: [
+                    IconButton(
+                      tooltip: '选择文件夹',
+                      onPressed: _showMobileFolders,
+                      icon: const Icon(Icons.folder_open_outlined, size: 20),
+                    ),
+                    Expanded(child: Center(child: _sectionChoices())),
+                    const SizedBox(width: 48),
+                  ],
+                ),
+              ),
+              SizedBox(height: 44, child: _buildEntryActions()),
+            ],
+          )
+        : Row(
+            children: [
+              const SizedBox(width: 8),
+              _sectionChoices(),
+              const Spacer(),
+              _buildEntryActions(),
+              const SizedBox(width: 6),
+            ],
+          ),
+  );
+
+  Future<void> _showMobileFolders() async {
+    final content = _selectedContent;
+    if (content == null) return;
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: ListView(
+          children: [
+            const ListTile(title: Text('选择文件夹')),
+            for (final group in content.groups)
+              ListTile(
+                leading: Icon(
+                  group.isRecycleBin
+                      ? Icons.delete_outline
+                      : Icons.folder_outlined,
+                ),
+                title: Text(_groupPath(group.id)),
+                selected: group.id == _selectedGroupId,
+                onTap: () => Navigator.pop(context, group.id),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (selected != null) _selectGroup(selected);
+  }
+
+  Widget _buildEntryTable() {
+    final visible = _visibleEntries();
+    if (visible.isEmpty) {
+      return Center(
+        child: Text(_query.trim().isEmpty ? '这个 Workspace 还是空的' : '没有匹配的条目'),
+      );
+    }
+    return Column(
+      children: [
+        Container(
+          height: 36,
+          color: Theme.of(context).colorScheme.surfaceContainer,
+          child: const Row(
+            children: [
+              SizedBox(width: 42),
+              Expanded(flex: 3, child: Text('标题')),
+              Expanded(flex: 3, child: Text('用户名')),
+              Expanded(flex: 3, child: Text('URL')),
+              SizedBox(width: 150, child: Text('修改时间')),
+              SizedBox(width: 42),
+            ],
+          ),
+        ),
+        Expanded(
+          child: ListView.builder(
+            itemCount: visible.length,
+            itemExtent: 39,
+            itemBuilder: (_, index) => _entryRow(visible[index]),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _entryRow(VaultEntryItem item) {
+    final selected = item.id == _selectedEntryId;
+    return Material(
+      color: selected
+          ? Theme.of(context).colorScheme.secondaryContainer
+          : indexColor(item),
+      child: InkWell(
+        onTap: () => _selectEntry(item),
+        child: Row(
+          children: [
+            SizedBox(width: 42, child: Icon(_iconFor(item.type), size: 19)),
+            Expanded(
+              flex: 3,
+              child: Text(item.title, overflow: TextOverflow.ellipsis),
+            ),
+            Expanded(
+              flex: 3,
+              child: Text(item.username, overflow: TextOverflow.ellipsis),
+            ),
+            Expanded(
+              flex: 3,
+              child: Text(item.url, overflow: TextOverflow.ellipsis),
+            ),
+            SizedBox(
+              width: 150,
+              child: Text(_formatModified(item.modifiedAtUnixMs)),
+            ),
+            SizedBox(width: 42, child: _entryMenu(item)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Color indexColor(VaultEntryItem item) => Colors.transparent;
+
+  String _formatModified(int milliseconds) {
+    if (milliseconds <= 0) return '—';
+    final value = DateTime.fromMillisecondsSinceEpoch(milliseconds);
+    String two(int number) => number.toString().padLeft(2, '0');
+    return '${value.year}-${two(value.month)}-${two(value.day)} '
+        '${two(value.hour)}:${two(value.minute)}';
+  }
+
+  Widget _entryMenu(VaultEntryItem item) => PopupMenuButton<String>(
+    padding: EdgeInsets.zero,
+    onSelected: (action) {
+      if (action == 'edit') _editEntry(item);
+      if (action == 'move') _moveEntryTo(item);
+      if (action == 'notes') _reveal(item, true);
+      if (action == 'delete') _deleteEntry(item);
+      if (action == 'restore') _restoreEntry(item);
+    },
+    itemBuilder: (_) => item.isInRecycleBin
+        ? const [
+            PopupMenuItem(value: 'restore', child: Text('恢复')),
+            PopupMenuItem(value: 'delete', child: Text('永久删除')),
+          ]
+        : const [
+            PopupMenuItem(value: 'edit', child: Text('编辑')),
+            PopupMenuItem(value: 'move', child: Text('移动到…')),
+            PopupMenuItem(value: 'notes', child: Text('显示受保护内容')),
+            PopupMenuItem(value: 'delete', child: Text('移至回收站')),
+          ],
+  );
+
+  Widget _buildDetailPane() {
+    final item = _selectedEntry;
+    if (item == null) {
+      return const Center(child: Text('选择一个条目查看详情'));
+    }
+    final otp = _codes[item.id];
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(20, 14, 20, 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              CircleAvatar(child: Icon(_iconFor(item.type))),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      item.title,
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                    Text(
+                      _groupPath(item.groupId),
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                onPressed: () => _editEntry(item),
+                icon: const Icon(Icons.edit_outlined),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Wrap(
+            spacing: 40,
+            runSpacing: 14,
+            children: [
+              if (item.username.isNotEmpty)
+                _detailField('用户名', item.username, copy: true),
+              if (item.url.isNotEmpty)
+                _detailField('URL', item.url, copy: true),
+              if (item.hasPassword)
+                _detailField(
+                  '密码',
+                  _revealedPassword ?? '••••••••••••',
+                  action: IconButton(
+                    tooltip: _revealedPassword == null ? '显示密码' : '隐藏密码',
+                    onPressed: () => _togglePassword(item),
+                    icon: Icon(
+                      _revealedPassword == null
+                          ? Icons.visibility_outlined
+                          : Icons.visibility_off_outlined,
+                    ),
+                  ),
+                  copy: _revealedPassword != null,
+                ),
+              if (otp != null) _detailField('动态验证码', otp.code, copy: true),
+            ],
+          ),
+          if (item.tags.isNotEmpty) ...[
+            const SizedBox(height: 18),
+            Wrap(
+              spacing: 6,
+              children: item.tags.map((tag) => Chip(label: Text(tag))).toList(),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _detailField(
+    String label,
+    String value, {
+    bool copy = false,
+    Widget? action,
+  }) => SizedBox(
+    width: 360,
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: Theme.of(context).textTheme.labelMedium),
+        Row(
+          children: [
+            Expanded(child: SelectableText(value)),
+            action ?? const SizedBox.shrink(),
+            if (copy)
+              IconButton(
+                tooltip: '复制',
+                onPressed: () => _copy(value),
+                icon: const Icon(Icons.copy_outlined, size: 18),
+              ),
+          ],
+        ),
+      ],
+    ),
+  );
+
+  Widget _buildMobileWorkspace() {
+    final workspace = _selected;
+    if (workspace == null) return const SizedBox();
+    if (_selectedHandle == null) {
+      return _LockedWorkspace(
+        workspace: workspace,
+        onUnlock: _unlock,
+        onQuickUnlock: workspace.quickUnlockEnabled ? _quickUnlock : null,
+      );
+    }
+    final visible = _visibleEntries();
+    return Column(
+      children: [
+        _buildSectionBar(mobile: true),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 2, 12, 8),
+          child: _buildSearchField(),
+        ),
+        Expanded(
+          child: visible.isEmpty
+              ? const Center(child: Text('这个 Workspace 还是空的'))
+              : ListView.separated(
+                  padding: const EdgeInsets.all(12),
+                  itemCount: visible.length,
+                  separatorBuilder: (_, _) => const Divider(height: 1),
+                  itemBuilder: (_, index) {
+                    final item = visible[index];
+                    final otp = _codes[item.id];
+                    return ListTile(
+                      leading: Icon(_iconFor(item.type)),
+                      title: Text(item.title),
+                      subtitle: Text(
+                        item.username.isEmpty
+                            ? _labelFor(item.type)
+                            : item.username,
+                      ),
+                      trailing: otp == null
+                          ? _entryMenu(item)
+                          : Text(
+                              otp.code,
+                              style: const TextStyle(letterSpacing: 2),
+                            ),
+                      onTap: () {
+                        _selectEntry(item);
+                        Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => Scaffold(
+                              appBar: AppBar(title: Text(item.title)),
+                              body: _buildDetailPane(),
+                            ),
+                          ),
+                        );
+                      },
+                    );
+                  },
+                ),
+        ),
+      ],
     );
   }
 }
@@ -1105,9 +1959,12 @@ class _ImportWorkspaceDialog extends StatefulWidget {
 }
 
 class _ImportWorkspaceDialogState extends State<_ImportWorkspaceDialog> {
-  final name = TextEditingController();
+  late final name = TextEditingController(
+    text: suggestWorkspaceName(widget.initialPath),
+  );
   late final path = TextEditingController(text: widget.initialPath);
   final password = TextEditingController();
+  String? error;
 
   @override
   void dispose() {
@@ -1143,6 +2000,13 @@ class _ImportWorkspaceDialogState extends State<_ImportWorkspaceDialog> {
             enableSuggestions: false,
             decoration: const InputDecoration(labelText: '主密码'),
           ),
+          if (error != null) ...[
+            const SizedBox(height: 12),
+            Text(
+              error!,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
+          ],
         ],
       ),
     ),
@@ -1152,14 +2016,20 @@ class _ImportWorkspaceDialogState extends State<_ImportWorkspaceDialog> {
         child: const Text('取消'),
       ),
       FilledButton(
-        onPressed: () => Navigator.pop(
-          context,
-          _ImportWorkspaceRequest(
-            name.text.trim(),
-            path.text.trim(),
-            password.text,
-          ),
-        ),
+        onPressed: () {
+          if (path.text.trim().isEmpty) {
+            setState(() => error = '请选择一个 KDBX 文件。');
+            return;
+          }
+          Navigator.pop(
+            context,
+            _ImportWorkspaceRequest(
+              name.text.trim(),
+              path.text.trim(),
+              password.text,
+            ),
+          );
+        },
         child: const Text('导入并解锁'),
       ),
     ],

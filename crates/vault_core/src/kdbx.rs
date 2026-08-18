@@ -2,7 +2,7 @@ use std::{fmt, io::Cursor};
 
 use keepass::{
     Database, DatabaseKey,
-    db::{EntryId, fields},
+    db::{EntryId, GroupId, GroupRef, Times, fields},
 };
 use uuid::Uuid;
 use zeroize::Zeroizing;
@@ -47,6 +47,26 @@ pub struct KdbxEntryRecord {
     pub has_otp: bool,
     pub tags: Vec<String>,
     pub modified_at_unix_ms: i64,
+    pub group_id: Uuid,
+    pub is_in_recycle_bin: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KdbxGroupRecord {
+    pub id: Uuid,
+    pub parent_id: Option<Uuid>,
+    pub name: String,
+    pub is_root: bool,
+    pub is_recycle_bin: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KdbxContentSnapshot {
+    pub root_group_id: Uuid,
+    pub recycle_bin_enabled: bool,
+    pub recycle_bin_id: Option<Uuid>,
+    pub groups: Vec<KdbxGroupRecord>,
+    pub entries: Vec<KdbxEntryRecord>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,6 +86,7 @@ impl KdbxEngine {
         }
         let mut inner = Database::new();
         inner.root_mut().name = root_name.to_owned();
+        enable_recycle_bin(&mut inner)?;
         Ok(KdbxDatabase { inner })
     }
 
@@ -87,9 +108,26 @@ impl KdbxEngine {
     }
 
     pub fn add_entry(&self, database: &mut KdbxDatabase, entry: &VaultEntry) -> Result<()> {
+        let root_id = database.inner.root().id().uuid();
+        self.add_entry_to_group(database, root_id, entry)
+    }
+
+    pub fn add_entry_to_group(
+        &self,
+        database: &mut KdbxDatabase,
+        group_id: Uuid,
+        entry: &VaultEntry,
+    ) -> Result<()> {
         let id = EntryId::from_uuid(entry.id);
-        let mut root = database.inner.root_mut();
-        let mut target = root
+        let group_id = GroupId::from_uuid(group_id);
+        if is_group_in_recycle_bin(&database.inner, group_id) {
+            return Err(VaultError::InvalidVaultMove);
+        }
+        let mut group = database
+            .inner
+            .group_mut(group_id)
+            .ok_or(VaultError::GroupNotFound)?;
+        let mut target = group
             .add_entry_with_id(id)
             .map_err(|_| VaultError::InvalidKdbx)?;
         target.set_unprotected(fields::TITLE, &entry.title);
@@ -107,6 +145,7 @@ impl KdbxEngine {
     }
 
     pub fn entries(&self, database: &KdbxDatabase) -> Vec<KdbxEntryRecord> {
+        let recycle_bin_id = database.inner.meta.recyclebin_uuid.map(GroupId::from_uuid);
         database
             .inner
             .iter_all_entries()
@@ -125,8 +164,245 @@ impl KdbxEngine {
                     .get(MODIFIED_AT_FIELD)
                     .and_then(|value| value.parse().ok())
                     .unwrap_or_default(),
+                group_id: entry.parent().id().uuid(),
+                is_in_recycle_bin: recycle_bin_id
+                    .is_some_and(|id| group_is_descendant_of(&entry.parent(), id)),
             })
             .collect()
+    }
+
+    pub fn content_snapshot(&self, database: &KdbxDatabase) -> KdbxContentSnapshot {
+        let root_group_id = database.inner.root().id().uuid();
+        let recycle_bin_enabled = database.inner.meta.recyclebin_enabled.unwrap_or(false);
+        let recycle_bin_id = recycle_bin_enabled
+            .then(|| database.inner.recycle_bin().map(|group| group.id().uuid()))
+            .flatten();
+        let mut groups = Vec::new();
+        collect_groups(
+            database.inner.root(),
+            root_group_id,
+            recycle_bin_id,
+            &mut groups,
+        );
+        KdbxContentSnapshot {
+            root_group_id,
+            recycle_bin_enabled,
+            recycle_bin_id,
+            groups,
+            entries: self.entries(database),
+        }
+    }
+
+    pub fn create_group(
+        &self,
+        database: &mut KdbxDatabase,
+        parent_id: Uuid,
+        name: &str,
+    ) -> Result<Uuid> {
+        if name.trim().is_empty() {
+            return Err(VaultError::InvalidKdbx);
+        }
+        let parent_id = GroupId::from_uuid(parent_id);
+        if is_group_in_recycle_bin(&database.inner, parent_id) {
+            return Err(VaultError::InvalidVaultMove);
+        }
+        let mut parent = database
+            .inner
+            .group_mut(parent_id)
+            .ok_or(VaultError::GroupNotFound)?;
+        let mut group = parent.add_group();
+        group.name = name.trim().to_owned();
+        group.times.last_modification = Some(Times::now());
+        Ok(group.id().uuid())
+    }
+
+    pub fn rename_group(
+        &self,
+        database: &mut KdbxDatabase,
+        group_id: Uuid,
+        name: &str,
+    ) -> Result<()> {
+        if name.trim().is_empty() {
+            return Err(VaultError::InvalidKdbx);
+        }
+        let group_id = GroupId::from_uuid(group_id);
+        reject_protected_group(&database.inner, group_id)?;
+        let mut group = database
+            .inner
+            .group_mut(group_id)
+            .ok_or(VaultError::GroupNotFound)?;
+        group.edit_tracking(|tracked| tracked.name = name.trim().to_owned());
+        Ok(())
+    }
+
+    pub fn move_group(
+        &self,
+        database: &mut KdbxDatabase,
+        group_id: Uuid,
+        destination_id: Uuid,
+    ) -> Result<()> {
+        let group_id = GroupId::from_uuid(group_id);
+        let destination_id = GroupId::from_uuid(destination_id);
+        reject_protected_group(&database.inner, group_id)?;
+        if is_group_in_recycle_bin(&database.inner, destination_id) {
+            return Err(VaultError::InvalidVaultMove);
+        }
+        database
+            .inner
+            .group_mut(group_id)
+            .ok_or(VaultError::GroupNotFound)?
+            .track_changes()
+            .move_to(destination_id)
+            .map_err(|_| VaultError::InvalidVaultMove)
+    }
+
+    pub fn move_entry(
+        &self,
+        database: &mut KdbxDatabase,
+        entry_id: Uuid,
+        destination_id: Uuid,
+    ) -> Result<()> {
+        let destination_id = GroupId::from_uuid(destination_id);
+        if is_group_in_recycle_bin(&database.inner, destination_id) {
+            return Err(VaultError::InvalidVaultMove);
+        }
+        database
+            .inner
+            .entry_mut(EntryId::from_uuid(entry_id))
+            .ok_or(VaultError::EntryNotFound)?
+            .track_changes()
+            .move_to(destination_id)
+            .map_err(|_| VaultError::GroupNotFound)
+    }
+
+    pub fn enable_recycle_bin(&self, database: &mut KdbxDatabase) -> Result<Uuid> {
+        enable_recycle_bin(&mut database.inner)
+    }
+
+    pub fn trash_entry(&self, database: &mut KdbxDatabase, entry_id: Uuid) -> Result<()> {
+        let recycle_id = active_recycle_bin_id(&database.inner)?;
+        let entry_id = EntryId::from_uuid(entry_id);
+        let entry = database
+            .inner
+            .entry(entry_id)
+            .ok_or(VaultError::EntryNotFound)?;
+        if group_is_descendant_of(&entry.parent(), recycle_id) {
+            return Err(VaultError::InvalidVaultMove);
+        }
+        database
+            .inner
+            .entry_mut(entry_id)
+            .ok_or(VaultError::EntryNotFound)?
+            .track_changes()
+            .move_to(recycle_id)
+            .map_err(|_| VaultError::InvalidVaultMove)
+    }
+
+    pub fn trash_group(&self, database: &mut KdbxDatabase, group_id: Uuid) -> Result<()> {
+        let recycle_id = active_recycle_bin_id(&database.inner)?;
+        let group_id = GroupId::from_uuid(group_id);
+        reject_protected_group(&database.inner, group_id)?;
+        if is_group_in_recycle_bin(&database.inner, group_id) {
+            return Err(VaultError::InvalidVaultMove);
+        }
+        database
+            .inner
+            .group_mut(group_id)
+            .ok_or(VaultError::GroupNotFound)?
+            .track_changes()
+            .move_to(recycle_id)
+            .map_err(|_| VaultError::InvalidVaultMove)
+    }
+
+    pub fn restore_entry(&self, database: &mut KdbxDatabase, entry_id: Uuid) -> Result<()> {
+        let entry_id = EntryId::from_uuid(entry_id);
+        let entry = database
+            .inner
+            .entry(entry_id)
+            .ok_or(VaultError::EntryNotFound)?;
+        if !is_group_in_recycle_bin(&database.inner, entry.parent().id()) {
+            return Err(VaultError::InvalidVaultMove);
+        }
+        let destination = entry
+            .previous_parent()
+            .map(|group| group.id())
+            .filter(|id| !is_group_in_recycle_bin(&database.inner, *id))
+            .unwrap_or_else(|| database.inner.root().id());
+        database
+            .inner
+            .entry_mut(entry_id)
+            .ok_or(VaultError::EntryNotFound)?
+            .track_changes()
+            .move_to(destination)
+            .map_err(|_| VaultError::InvalidVaultMove)
+    }
+
+    pub fn restore_group(&self, database: &mut KdbxDatabase, group_id: Uuid) -> Result<()> {
+        let group_id = GroupId::from_uuid(group_id);
+        reject_protected_group(&database.inner, group_id)?;
+        if !is_group_in_recycle_bin(&database.inner, group_id) {
+            return Err(VaultError::InvalidVaultMove);
+        }
+        let group = database
+            .inner
+            .group(group_id)
+            .ok_or(VaultError::GroupNotFound)?;
+        let destination = group
+            .previous_parent()
+            .map(|parent| parent.id())
+            .filter(|id| !is_group_in_recycle_bin(&database.inner, *id))
+            .unwrap_or_else(|| database.inner.root().id());
+        database
+            .inner
+            .group_mut(group_id)
+            .ok_or(VaultError::GroupNotFound)?
+            .track_changes()
+            .move_to(destination)
+            .map_err(|_| VaultError::InvalidVaultMove)
+    }
+
+    pub fn remove_group_permanently(
+        &self,
+        database: &mut KdbxDatabase,
+        group_id: Uuid,
+    ) -> Result<()> {
+        let group_id = GroupId::from_uuid(group_id);
+        reject_protected_group(&database.inner, group_id)?;
+        database
+            .inner
+            .group_mut(group_id)
+            .ok_or(VaultError::GroupNotFound)?
+            .track_changes()
+            .remove()
+            .map_err(|_| VaultError::ProtectedVaultObject)
+    }
+
+    pub fn empty_recycle_bin(&self, database: &mut KdbxDatabase) -> Result<()> {
+        let recycle_id = active_recycle_bin_id(&database.inner)?;
+        let recycle = database
+            .inner
+            .group(recycle_id)
+            .ok_or(VaultError::GroupNotFound)?;
+        let entry_ids: Vec<_> = recycle.entry_ids().collect();
+        let group_ids: Vec<_> = recycle.group_ids().collect();
+        for entry_id in entry_ids {
+            database
+                .inner
+                .entry_mut(entry_id)
+                .ok_or(VaultError::EntryNotFound)?
+                .track_changes()
+                .remove();
+        }
+        for group_id in group_ids {
+            database
+                .inner
+                .group_mut(group_id)
+                .ok_or(VaultError::GroupNotFound)?
+                .track_changes()
+                .remove()
+                .map_err(|_| VaultError::ProtectedVaultObject)?;
+        }
+        Ok(())
     }
 
     pub fn update_entry(&self, database: &mut KdbxDatabase, entry: &VaultEntry) -> Result<()> {
@@ -211,6 +487,83 @@ impl KdbxEngine {
     }
 }
 
+fn collect_groups(
+    group: GroupRef<'_>,
+    root_group_id: Uuid,
+    recycle_bin_id: Option<Uuid>,
+    groups: &mut Vec<KdbxGroupRecord>,
+) {
+    let id = group.id().uuid();
+    groups.push(KdbxGroupRecord {
+        id,
+        parent_id: group.parent().map(|parent| parent.id().uuid()),
+        name: group.name.clone(),
+        is_root: id == root_group_id,
+        is_recycle_bin: recycle_bin_id == Some(id),
+    });
+    for child in group.groups() {
+        collect_groups(child, root_group_id, recycle_bin_id, groups);
+    }
+}
+
+fn group_is_descendant_of(group: &GroupRef<'_>, ancestor_id: GroupId) -> bool {
+    group.id() == ancestor_id
+        || group
+            .parent()
+            .is_some_and(|parent| group_is_descendant_of(&parent, ancestor_id))
+}
+
+fn is_group_in_recycle_bin(database: &Database, group_id: GroupId) -> bool {
+    let Some(recycle_bin) = database.recycle_bin() else {
+        return false;
+    };
+    database
+        .group(group_id)
+        .is_some_and(|group| group_is_descendant_of(&group, recycle_bin.id()))
+}
+
+fn reject_protected_group(database: &Database, group_id: GroupId) -> Result<()> {
+    let group = database.group(group_id).ok_or(VaultError::GroupNotFound)?;
+    if group.parent().is_none()
+        || database
+            .recycle_bin()
+            .is_some_and(|bin| bin.id() == group_id)
+    {
+        return Err(VaultError::ProtectedVaultObject);
+    }
+    Ok(())
+}
+
+fn active_recycle_bin_id(database: &Database) -> Result<GroupId> {
+    if !database.meta.recyclebin_enabled.unwrap_or(false) {
+        return Err(VaultError::RecycleBinDisabled);
+    }
+    database
+        .recycle_bin()
+        .map(|group| group.id())
+        .ok_or(VaultError::GroupNotFound)
+}
+
+fn enable_recycle_bin(database: &mut Database) -> Result<Uuid> {
+    if let Some(recycle_bin) = database.recycle_bin() {
+        let id = recycle_bin.id().uuid();
+        database.meta.recyclebin_enabled = Some(true);
+        database.meta.recyclebin_changed = Some(Times::now());
+        return Ok(id);
+    }
+
+    let id = {
+        let mut root = database.root_mut();
+        let mut recycle_bin = root.add_group();
+        recycle_bin.name = "Recycle Bin".to_owned();
+        recycle_bin.id().uuid()
+    };
+    database.meta.recyclebin_enabled = Some(true);
+    database.meta.recyclebin_uuid = Some(id);
+    database.meta.recyclebin_changed = Some(Times::now());
+    Ok(id)
+}
+
 fn kind_name(kind: crate::EntryKind) -> &'static str {
     match kind {
         crate::EntryKind::Login => "login",
@@ -280,6 +633,8 @@ mod tests {
                 has_otp: true,
                 tags: vec!["personal".into()],
                 modified_at_unix_ms: 0,
+                group_id: opened.inner.root().id().uuid(),
+                is_in_recycle_bin: false,
             }]
         );
         assert!(matches!(
@@ -359,5 +714,99 @@ mod tests {
         engine.remove_entry(&mut database, entry.id).unwrap();
         assert!(engine.entries(&database).is_empty());
         assert!(database.inner.deleted_objects.contains_key(&entry.id));
+    }
+
+    #[test]
+    fn manages_nested_groups_and_moves_entries() {
+        let engine = KdbxEngine;
+        let mut database = engine.create("Personal").unwrap();
+        let root_id = database.inner.root().id().uuid();
+        let work_id = engine.create_group(&mut database, root_id, "Work").unwrap();
+        let cloud_id = engine
+            .create_group(&mut database, work_id, "Cloud")
+            .unwrap();
+        let entry = sample_entry();
+
+        engine
+            .add_entry_to_group(&mut database, cloud_id, &entry)
+            .unwrap();
+        engine.move_entry(&mut database, entry.id, work_id).unwrap();
+        engine
+            .rename_group(&mut database, cloud_id, "Servers")
+            .unwrap();
+        engine.move_group(&mut database, cloud_id, root_id).unwrap();
+
+        let snapshot = engine.content_snapshot(&database);
+        assert_eq!(
+            snapshot
+                .entries
+                .iter()
+                .find(|record| record.id == entry.id)
+                .unwrap()
+                .group_id,
+            work_id
+        );
+        let servers = snapshot
+            .groups
+            .iter()
+            .find(|group| group.id == cloud_id)
+            .unwrap();
+        assert_eq!(servers.name, "Servers");
+        assert_eq!(servers.parent_id, Some(root_id));
+    }
+
+    #[test]
+    fn trashes_restores_and_permanently_removes_content() {
+        let engine = KdbxEngine;
+        let mut database = engine.create("Personal").unwrap();
+        let root_id = database.inner.root().id().uuid();
+        let group_id = engine
+            .create_group(&mut database, root_id, "Archive")
+            .unwrap();
+        let entry = sample_entry();
+        engine
+            .add_entry_to_group(&mut database, group_id, &entry)
+            .unwrap();
+
+        engine.trash_entry(&mut database, entry.id).unwrap();
+        assert!(engine.entries(&database)[0].is_in_recycle_bin);
+        engine.restore_entry(&mut database, entry.id).unwrap();
+        assert_eq!(engine.entries(&database)[0].group_id, group_id);
+
+        engine.trash_group(&mut database, group_id).unwrap();
+        assert!(engine.content_snapshot(&database).entries[0].is_in_recycle_bin);
+        engine.restore_group(&mut database, group_id).unwrap();
+        assert_eq!(
+            engine
+                .content_snapshot(&database)
+                .groups
+                .iter()
+                .find(|group| group.id == group_id)
+                .unwrap()
+                .parent_id,
+            Some(root_id)
+        );
+
+        engine.trash_group(&mut database, group_id).unwrap();
+        engine.empty_recycle_bin(&mut database).unwrap();
+        assert!(engine.entries(&database).is_empty());
+        assert!(database.inner.group(GroupId::from_uuid(group_id)).is_none());
+    }
+
+    #[test]
+    fn protects_root_and_recycle_bin_from_regular_operations() {
+        let engine = KdbxEngine;
+        let mut database = engine.create("Personal").unwrap();
+        let snapshot = engine.content_snapshot(&database);
+        let recycle_id = snapshot.recycle_bin_id.unwrap();
+
+        assert_eq!(
+            engine.rename_group(&mut database, snapshot.root_group_id, "Nope"),
+            Err(VaultError::ProtectedVaultObject)
+        );
+        assert_eq!(
+            engine.remove_group_permanently(&mut database, recycle_id),
+            Err(VaultError::ProtectedVaultObject)
+        );
     }
 }

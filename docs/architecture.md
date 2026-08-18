@@ -25,6 +25,13 @@ database, merges an externally changed disk replica when needed, writes an
 encrypted sibling backup, and then performs a temporary-file/fsync/atomic-replace
 transaction.
 
+The UI consumes a purpose-built content snapshot containing only group
+relationships and non-secret entry summaries. Nested folders map directly to
+KDBX groups. Recycle-bin deletion is a tracked KDBX move that records the prior
+parent; restoration uses that parent when it still exists and falls back to the
+root otherwise. Root and recycle-bin groups are protected from ordinary rename,
+move, and delete operations.
+
 The synchronization engine never performs an unconditional remote overwrite. It
 downloads the current revision, merges UUIDs/history/deletion records, stores an
 encrypted backup, uploads against the observed ETag, and downloads again to

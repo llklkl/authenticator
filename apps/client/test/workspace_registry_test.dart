@@ -6,6 +6,11 @@ import 'package:authenticator_vault/src/features/vault/vault_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('workspace name defaults to the selected KDBX file name', () {
+    expect(suggestWorkspaceName('/home/user/Documents/密码.kdbx'), '密码');
+    expect(suggestWorkspaceName(r'C:\Users\user\Work.KDBX'), 'Work');
+  });
+
   test(
     'legacy registry migrates to versioned UUID records with backup',
     () async {

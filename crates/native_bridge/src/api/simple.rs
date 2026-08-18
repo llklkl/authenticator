@@ -149,6 +149,26 @@ pub struct VaultEntryView {
     pub has_otp: bool,
     pub tags: Vec<String>,
     pub modified_at_unix_ms: i64,
+    pub group_id: String,
+    pub is_in_recycle_bin: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VaultGroupView {
+    pub id: String,
+    pub parent_id: Option<String>,
+    pub name: String,
+    pub is_root: bool,
+    pub is_recycle_bin: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VaultContentSnapshot {
+    pub root_group_id: String,
+    pub recycle_bin_enabled: bool,
+    pub recycle_bin_id: Option<String>,
+    pub groups: Vec<VaultGroupView>,
+    pub entries: Vec<VaultEntryView>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -165,6 +185,10 @@ pub enum BridgeError {
     VaultNotFound,
     VaultAlreadyOpen,
     EntryNotFound,
+    GroupNotFound,
+    RecycleBinDisabled,
+    ProtectedVaultObject,
+    InvalidVaultMove,
     FieldUnavailable,
     WrongPasswordOrInvalidVault,
     FileRead,
@@ -329,21 +353,33 @@ pub fn list_entries(handle_id: u64) -> Result<Vec<VaultEntryView>, BridgeError> 
     let session = session
         .lock()
         .map_err(|_| BridgeError::SessionUnavailable)?;
-    Ok(session
-        .entries()
-        .into_iter()
-        .map(|entry| VaultEntryView {
-            id: entry.id.to_string(),
-            kind: entry.kind.into(),
-            title: entry.title,
-            username: entry.username,
-            url: entry.url,
-            has_password: entry.has_password,
-            has_otp: entry.has_otp,
-            tags: entry.tags,
-            modified_at_unix_ms: entry.modified_at_unix_ms,
-        })
-        .collect())
+    Ok(session.entries().into_iter().map(entry_view).collect())
+}
+
+#[frb(sync)]
+pub fn vault_content(handle_id: u64) -> Result<VaultContentSnapshot, BridgeError> {
+    let session = get_vault(handle_id)?;
+    let session = session
+        .lock()
+        .map_err(|_| BridgeError::SessionUnavailable)?;
+    let snapshot = session.content_snapshot();
+    Ok(VaultContentSnapshot {
+        root_group_id: snapshot.root_group_id.to_string(),
+        recycle_bin_enabled: snapshot.recycle_bin_enabled,
+        recycle_bin_id: snapshot.recycle_bin_id.map(|id| id.to_string()),
+        groups: snapshot
+            .groups
+            .into_iter()
+            .map(|group| VaultGroupView {
+                id: group.id.to_string(),
+                parent_id: group.parent_id.map(|id| id.to_string()),
+                name: group.name,
+                is_root: group.is_root,
+                is_recycle_bin: group.is_recycle_bin,
+            })
+            .collect(),
+        entries: snapshot.entries.into_iter().map(entry_view).collect(),
+    })
 }
 
 pub fn create_entry(handle_id: u64, input: VaultEntryInput) -> Result<String, BridgeError> {
@@ -351,6 +387,94 @@ pub fn create_entry(handle_id: u64, input: VaultEntryInput) -> Result<String, Br
     let id = entry.id;
     with_vault_mut(handle_id, |session| session.add_entry(&entry))?;
     Ok(id.to_string())
+}
+
+pub fn create_entry_in_group(
+    handle_id: u64,
+    group_id: String,
+    input: VaultEntryInput,
+) -> Result<String, BridgeError> {
+    let group_id = parse_uuid(&group_id)?;
+    let entry = input.into_entry(None, None)?;
+    let id = entry.id;
+    with_vault_mut(handle_id, |session| {
+        session.add_entry_to_group(group_id, &entry)
+    })?;
+    Ok(id.to_string())
+}
+
+pub fn create_group(
+    handle_id: u64,
+    parent_id: String,
+    name: String,
+) -> Result<String, BridgeError> {
+    let parent_id = parse_uuid(&parent_id)?;
+    with_vault_mut(handle_id, |session| session.create_group(parent_id, &name))
+        .map(|id| id.to_string())
+}
+
+pub fn rename_group(handle_id: u64, group_id: String, name: String) -> Result<(), BridgeError> {
+    let group_id = parse_uuid(&group_id)?;
+    with_vault_mut(handle_id, |session| session.rename_group(group_id, &name))
+}
+
+pub fn move_group(
+    handle_id: u64,
+    group_id: String,
+    destination_id: String,
+) -> Result<(), BridgeError> {
+    let group_id = parse_uuid(&group_id)?;
+    let destination_id = parse_uuid(&destination_id)?;
+    with_vault_mut(handle_id, |session| {
+        session.move_group(group_id, destination_id)
+    })
+}
+
+pub fn move_entry(
+    handle_id: u64,
+    entry_id: String,
+    destination_id: String,
+) -> Result<(), BridgeError> {
+    let entry_id = parse_uuid(&entry_id)?;
+    let destination_id = parse_uuid(&destination_id)?;
+    with_vault_mut(handle_id, |session| {
+        session.move_entry(entry_id, destination_id)
+    })
+}
+
+pub fn enable_recycle_bin(handle_id: u64) -> Result<String, BridgeError> {
+    with_vault_mut(handle_id, FileVaultSession::enable_recycle_bin).map(|id| id.to_string())
+}
+
+pub fn trash_entry(handle_id: u64, entry_id: String) -> Result<(), BridgeError> {
+    let entry_id = parse_uuid(&entry_id)?;
+    with_vault_mut(handle_id, |session| session.trash_entry(entry_id))
+}
+
+pub fn trash_group(handle_id: u64, group_id: String) -> Result<(), BridgeError> {
+    let group_id = parse_uuid(&group_id)?;
+    with_vault_mut(handle_id, |session| session.trash_group(group_id))
+}
+
+pub fn restore_entry(handle_id: u64, entry_id: String) -> Result<(), BridgeError> {
+    let entry_id = parse_uuid(&entry_id)?;
+    with_vault_mut(handle_id, |session| session.restore_entry(entry_id))
+}
+
+pub fn restore_group(handle_id: u64, group_id: String) -> Result<(), BridgeError> {
+    let group_id = parse_uuid(&group_id)?;
+    with_vault_mut(handle_id, |session| session.restore_group(group_id))
+}
+
+pub fn permanently_delete_group(handle_id: u64, group_id: String) -> Result<(), BridgeError> {
+    let group_id = parse_uuid(&group_id)?;
+    with_vault_mut(handle_id, |session| {
+        session.remove_group_permanently(group_id)
+    })
+}
+
+pub fn empty_recycle_bin(handle_id: u64) -> Result<(), BridgeError> {
+    with_vault_mut(handle_id, FileVaultSession::empty_recycle_bin)
 }
 
 pub fn update_entry(
@@ -606,6 +730,22 @@ fn parse_uuid(value: &str) -> Result<Uuid, BridgeError> {
     Uuid::parse_str(value).map_err(|_| BridgeError::InvalidInput)
 }
 
+fn entry_view(entry: vault_core::KdbxEntryRecord) -> VaultEntryView {
+    VaultEntryView {
+        id: entry.id.to_string(),
+        kind: entry.kind.into(),
+        title: entry.title,
+        username: entry.username,
+        url: entry.url,
+        has_password: entry.has_password,
+        has_otp: entry.has_otp,
+        tags: entry.tags,
+        modified_at_unix_ms: entry.modified_at_unix_ms,
+        group_id: entry.group_id.to_string(),
+        is_in_recycle_bin: entry.is_in_recycle_bin,
+    }
+}
+
 fn read_vault_sessions() -> Result<std::sync::RwLockReadGuard<'static, VaultSessions>, BridgeError>
 {
     VAULT_SESSIONS
@@ -695,6 +835,10 @@ impl From<VaultError> for BridgeError {
             VaultError::KdbxSave | VaultError::VaultWrite => Self::FileWrite,
             VaultError::VaultRead => Self::FileRead,
             VaultError::EntryNotFound => Self::EntryNotFound,
+            VaultError::GroupNotFound => Self::GroupNotFound,
+            VaultError::RecycleBinDisabled => Self::RecycleBinDisabled,
+            VaultError::ProtectedVaultObject => Self::ProtectedVaultObject,
+            VaultError::InvalidVaultMove => Self::InvalidVaultMove,
             VaultError::FieldUnavailable => Self::FieldUnavailable,
             VaultError::VaultAlreadyOpen => Self::VaultAlreadyOpen,
             VaultError::QuickUnlock => Self::QuickUnlockFailed,
@@ -748,6 +892,14 @@ mod tests {
         .unwrap();
         let id = create_entry(handle.id, input()).unwrap();
         assert_eq!(list_entries(handle.id).unwrap().len(), 1);
+        let initial = vault_content(handle.id).unwrap();
+        assert!(initial.recycle_bin_enabled);
+        let group_id = create_group(handle.id, initial.root_group_id, "Work".into()).unwrap();
+        move_entry(handle.id, id.clone(), group_id.clone()).unwrap();
+        assert_eq!(
+            vault_content(handle.id).unwrap().entries[0].group_id,
+            group_id
+        );
         assert_eq!(
             reveal_entry_field(handle.id, id.clone(), SensitiveField::Password).unwrap(),
             "entry-password"
@@ -759,6 +911,9 @@ mod tests {
                 .len(),
             6
         );
+        trash_entry(handle.id, id.clone()).unwrap();
+        assert!(vault_content(handle.id).unwrap().entries[0].is_in_recycle_bin);
+        restore_entry(handle.id, id.clone()).unwrap();
         delete_entry(handle.id, id).unwrap();
         assert!(list_entries(handle.id).unwrap().is_empty());
         lock_all_vaults().unwrap();

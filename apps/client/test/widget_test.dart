@@ -33,6 +33,9 @@ void main() {
     await tester.tap(find.text('导入'));
     await tester.pumpAndSettle();
 
+    await tester.tap(find.text('OTP').first);
+    await tester.pumpAndSettle();
+
     expect(find.text('Example'), findsOneWidget);
     expect(find.text('alice'), findsOneWidget);
     expect(find.text('123456'), findsOneWidget);

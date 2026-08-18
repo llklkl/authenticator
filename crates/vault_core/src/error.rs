@@ -39,6 +39,14 @@ pub enum VaultError {
     VaultWrite,
     #[error("the vault entry does not exist")]
     EntryNotFound,
+    #[error("the vault group does not exist")]
+    GroupNotFound,
+    #[error("the recycle bin is disabled")]
+    RecycleBinDisabled,
+    #[error("the requested vault object is protected")]
+    ProtectedVaultObject,
+    #[error("the requested vault move is invalid")]
+    InvalidVaultMove,
     #[error("the requested entry field is unavailable")]
     FieldUnavailable,
     #[error("the vault file is already open")]

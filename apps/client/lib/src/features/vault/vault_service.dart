@@ -9,6 +9,15 @@ import 'package:path_provider/path_provider.dart';
 
 enum EntryType { login, otp, recoveryCodes, secureNote }
 
+String suggestWorkspaceName(String path) {
+  final fileName = path.replaceAll('\\', '/').split('/').last.trim();
+  final withoutExtension = fileName.replaceFirst(
+    RegExp(r'\.kdbx$', caseSensitive: false),
+    '',
+  );
+  return withoutExtension.isEmpty ? 'Imported Workspace' : withoutExtension;
+}
+
 class WorkspaceInfo {
   const WorkspaceInfo({
     required this.id,
@@ -72,6 +81,9 @@ class VaultEntryItem {
     required this.hasPassword,
     required this.hasOtp,
     required this.tags,
+    this.modifiedAtUnixMs = 0,
+    this.groupId = '',
+    this.isInRecycleBin = false,
   });
 
   final String id;
@@ -82,6 +94,41 @@ class VaultEntryItem {
   final bool hasPassword;
   final bool hasOtp;
   final List<String> tags;
+  final int modifiedAtUnixMs;
+  final String groupId;
+  final bool isInRecycleBin;
+}
+
+class VaultGroupItem {
+  const VaultGroupItem({
+    required this.id,
+    required this.parentId,
+    required this.name,
+    required this.isRoot,
+    required this.isRecycleBin,
+  });
+
+  final String id;
+  final String? parentId;
+  final String name;
+  final bool isRoot;
+  final bool isRecycleBin;
+}
+
+class VaultContent {
+  const VaultContent({
+    required this.rootGroupId,
+    required this.recycleBinEnabled,
+    required this.recycleBinId,
+    required this.groups,
+    required this.entries,
+  });
+
+  final String rootGroupId;
+  final bool recycleBinEnabled;
+  final String? recycleBinId;
+  final List<VaultGroupItem> groups;
+  final List<VaultEntryItem> entries;
 }
 
 class VaultEntryDraft {
@@ -185,7 +232,28 @@ class WorkspaceRegistryException implements Exception {
   const WorkspaceRegistryException();
 }
 
-class NativeVaultService implements SecurityVaultService {
+abstract interface class StructuredVaultService implements VaultService {
+  Future<VaultContent> content(BigInt handleId);
+  Future<void> createEntryInGroup(
+    BigInt handleId,
+    String groupId,
+    VaultEntryDraft draft,
+  );
+  Future<String> createGroup(BigInt handleId, String parentId, String name);
+  Future<void> renameGroup(BigInt handleId, String groupId, String name);
+  Future<void> moveGroup(BigInt handleId, String groupId, String destinationId);
+  Future<void> moveEntry(BigInt handleId, String entryId, String destinationId);
+  Future<String> enableRecycleBin(BigInt handleId);
+  Future<void> trashEntry(BigInt handleId, String entryId);
+  Future<void> trashGroup(BigInt handleId, String groupId);
+  Future<void> restoreEntry(BigInt handleId, String entryId);
+  Future<void> restoreGroup(BigInt handleId, String groupId);
+  Future<void> permanentlyDeleteGroup(BigInt handleId, String groupId);
+  Future<void> emptyRecycleBin(BigInt handleId);
+}
+
+class NativeVaultService
+    implements SecurityVaultService, StructuredVaultService {
   NativeVaultService._(
     this._registryFile,
     this._vaultDirectory,
@@ -309,15 +377,22 @@ class NativeVaultService implements SecurityVaultService {
     String password,
   ) async {
     final id = _newWorkspaceId();
+    final displayName = name.trim().isEmpty
+        ? suggestWorkspaceName(path)
+        : name.trim();
     final internalPath =
         '${_vaultDirectory.path}${Platform.pathSeparator}$id.kdbx';
     final handle = await native.importVault(
       sourcePath: path,
       destinationPath: internalPath,
-      name: name,
+      name: displayName,
       masterPassword: password,
     );
-    final workspace = WorkspaceInfo(id: id, name: name, path: internalPath);
+    final workspace = WorkspaceInfo(
+      id: id,
+      name: displayName,
+      path: internalPath,
+    );
     await _appendWorkspace(workspace);
     return UnlockedWorkspace(workspace: workspace, handleId: handle.id);
   }
@@ -347,14 +422,126 @@ class NativeVaultService implements SecurityVaultService {
           hasPassword: entry.hasPassword,
           hasOtp: entry.hasOtp,
           tags: entry.tags,
+          modifiedAtUnixMs: entry.modifiedAtUnixMs,
+          groupId: entry.groupId,
+          isInRecycleBin: entry.isInRecycleBin,
         ),
       )
       .toList(growable: false);
 
   @override
+  Future<VaultContent> content(BigInt handleId) async {
+    final value = native.vaultContent(handleId: handleId);
+    return VaultContent(
+      rootGroupId: value.rootGroupId,
+      recycleBinEnabled: value.recycleBinEnabled,
+      recycleBinId: value.recycleBinId,
+      groups: value.groups
+          .map(
+            (group) => VaultGroupItem(
+              id: group.id,
+              parentId: group.parentId,
+              name: group.name,
+              isRoot: group.isRoot,
+              isRecycleBin: group.isRecycleBin,
+            ),
+          )
+          .toList(growable: false),
+      entries: value.entries
+          .map(
+            (entry) => VaultEntryItem(
+              id: entry.id,
+              type: _fromNativeKind(entry.kind),
+              title: entry.title,
+              username: entry.username,
+              url: entry.url,
+              hasPassword: entry.hasPassword,
+              hasOtp: entry.hasOtp,
+              tags: entry.tags,
+              modifiedAtUnixMs: entry.modifiedAtUnixMs,
+              groupId: entry.groupId,
+              isInRecycleBin: entry.isInRecycleBin,
+            ),
+          )
+          .toList(growable: false),
+    );
+  }
+
+  @override
   Future<void> createEntry(BigInt handleId, VaultEntryDraft draft) async {
     await native.createEntry(handleId: handleId, input: _toNativeInput(draft));
   }
+
+  @override
+  Future<void> createEntryInGroup(
+    BigInt handleId,
+    String groupId,
+    VaultEntryDraft draft,
+  ) async {
+    await native.createEntryInGroup(
+      handleId: handleId,
+      groupId: groupId,
+      input: _toNativeInput(draft),
+    );
+  }
+
+  @override
+  Future<String> createGroup(BigInt handleId, String parentId, String name) =>
+      native.createGroup(handleId: handleId, parentId: parentId, name: name);
+
+  @override
+  Future<void> renameGroup(BigInt handleId, String groupId, String name) =>
+      native.renameGroup(handleId: handleId, groupId: groupId, name: name);
+
+  @override
+  Future<void> moveGroup(
+    BigInt handleId,
+    String groupId,
+    String destinationId,
+  ) => native.moveGroup(
+    handleId: handleId,
+    groupId: groupId,
+    destinationId: destinationId,
+  );
+
+  @override
+  Future<void> moveEntry(
+    BigInt handleId,
+    String entryId,
+    String destinationId,
+  ) => native.moveEntry(
+    handleId: handleId,
+    entryId: entryId,
+    destinationId: destinationId,
+  );
+
+  @override
+  Future<String> enableRecycleBin(BigInt handleId) =>
+      native.enableRecycleBin(handleId: handleId);
+
+  @override
+  Future<void> trashEntry(BigInt handleId, String entryId) =>
+      native.trashEntry(handleId: handleId, entryId: entryId);
+
+  @override
+  Future<void> trashGroup(BigInt handleId, String groupId) =>
+      native.trashGroup(handleId: handleId, groupId: groupId);
+
+  @override
+  Future<void> restoreEntry(BigInt handleId, String entryId) =>
+      native.restoreEntry(handleId: handleId, entryId: entryId);
+
+  @override
+  Future<void> restoreGroup(BigInt handleId, String groupId) =>
+      native.restoreGroup(handleId: handleId, groupId: groupId);
+
+  @override
+  Future<void> permanentlyDeleteGroup(BigInt handleId, String groupId) =>
+      native.permanentlyDeleteGroup(handleId: handleId, groupId: groupId);
+
+  @override
+  Future<void> emptyRecycleBin(BigInt handleId) =>
+      native.emptyRecycleBin(handleId: handleId);
 
   @override
   Future<void> updateEntry(

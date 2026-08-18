@@ -7,10 +7,10 @@ entry metadata uses the unprotected custom fields
 notes, OTP URIs, and recovery codes are protected KDBX fields.
 
 Read-modify-write tests cover unknown protected fields, entry history, UUID
-merge, deletion records, and independently added entries. Before a stable
-release, the compatibility suite must also exercise versioned fixtures opened
-and saved by current KeePass and KeePassXC releases, including custom icons,
-attachments, nested groups, and recycle-bin behavior.
+merge, deletion records, independently added entries, nested-group moves, and
+recycle-bin trash/restore/empty behavior. Before a stable release, the
+compatibility suite must also exercise versioned fixtures opened and saved by
+current KeePass and KeePassXC releases, including custom icons and attachments.
 
 Google Authenticator migration payloads support SHA-1, SHA-256, SHA-512,
 six/eight digits, HOTP, TOTP, and multiple OTP parameters in a single payload.

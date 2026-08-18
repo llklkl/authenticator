@@ -10,7 +10,10 @@ mod workspace;
 
 pub use entry::{EntryKind, EntrySummary, VaultEntry};
 pub use error::{Result, VaultError};
-pub use kdbx::{EntrySecretField, KdbxDatabase, KdbxEngine, KdbxEntryRecord};
+pub use kdbx::{
+    EntrySecretField, KdbxContentSnapshot, KdbxDatabase, KdbxEngine, KdbxEntryRecord,
+    KdbxGroupRecord,
+};
 pub use otp::{OtpAlgorithm, OtpCode, OtpConfig, OtpKind};
 pub use quick_unlock::{
     QuickUnlockEnrollment, prepare_quick_unlock, quick_unlock_key, remove_quick_unlock,

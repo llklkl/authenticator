@@ -61,6 +61,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<VaultEntryView> dco_decode_list_vault_entry_view(dynamic raw);
 
   @protected
+  List<VaultGroupView> dco_decode_list_vault_group_view(dynamic raw);
+
+  @protected
   String? dco_decode_opt_String(dynamic raw);
 
   @protected
@@ -106,6 +109,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void dco_decode_unit(dynamic raw);
 
   @protected
+  VaultContentSnapshot dco_decode_vault_content_snapshot(dynamic raw);
+
+  @protected
   VaultEntryInput dco_decode_vault_entry_input(dynamic raw);
 
   @protected
@@ -113,6 +119,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   VaultEntryView dco_decode_vault_entry_view(dynamic raw);
+
+  @protected
+  VaultGroupView dco_decode_vault_group_view(dynamic raw);
 
   @protected
   VaultHandle dco_decode_vault_handle(dynamic raw);
@@ -161,6 +170,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<VaultEntryView> sse_decode_list_vault_entry_view(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<VaultGroupView> sse_decode_list_vault_group_view(
     SseDeserializer deserializer,
   );
 
@@ -218,6 +232,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_decode_unit(SseDeserializer deserializer);
 
   @protected
+  VaultContentSnapshot sse_decode_vault_content_snapshot(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   VaultEntryInput sse_decode_vault_entry_input(SseDeserializer deserializer);
 
   @protected
@@ -225,6 +244,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   VaultEntryView sse_decode_vault_entry_view(SseDeserializer deserializer);
+
+  @protected
+  VaultGroupView sse_decode_vault_group_view(SseDeserializer deserializer);
 
   @protected
   VaultHandle sse_decode_vault_handle(SseDeserializer deserializer);
@@ -280,6 +302,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_list_vault_entry_view(
     List<VaultEntryView> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_vault_group_view(
+    List<VaultGroupView> self,
     SseSerializer serializer,
   );
 
@@ -347,6 +375,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_unit(void self, SseSerializer serializer);
 
   @protected
+  void sse_encode_vault_content_snapshot(
+    VaultContentSnapshot self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_vault_entry_input(
     VaultEntryInput self,
     SseSerializer serializer,
@@ -361,6 +395,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_vault_entry_view(
     VaultEntryView self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_vault_group_view(
+    VaultGroupView self,
     SseSerializer serializer,
   );
 

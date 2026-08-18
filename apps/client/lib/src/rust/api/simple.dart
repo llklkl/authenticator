@@ -7,9 +7,9 @@ import '../frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `ensure_path_available`, `get_vault`, `insert_vault_session`, `into_entry`, `parse_uuid`, `path_identity`, `read_vault_sessions`, `with_vault_mut`, `write_vault_sessions`
+// These functions are ignored because they are not marked as `pub`: `ensure_path_available`, `entry_view`, `get_vault`, `insert_vault_session`, `into_entry`, `parse_uuid`, `path_identity`, `read_vault_sessions`, `with_vault_mut`, `write_vault_sessions`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `OtpSessions`, `SessionVaultMerger`, `VaultSessions`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `merge`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `merge`
 // These functions are ignored (category: IgnoreBecauseOwnerTyShouldIgnore): `default`, `default`
 
 /// Create and unlock a new KDBX workspace. Existing files are never overwritten.
@@ -86,6 +86,9 @@ void lockAllVaults() => RustLib.instance.api.crateApiSimpleLockAllVaults();
 List<VaultEntryView> listEntries({required BigInt handleId}) =>
     RustLib.instance.api.crateApiSimpleListEntries(handleId: handleId);
 
+VaultContentSnapshot vaultContent({required BigInt handleId}) =>
+    RustLib.instance.api.crateApiSimpleVaultContent(handleId: handleId);
+
 Future<String> createEntry({
   required BigInt handleId,
   required VaultEntryInput input,
@@ -93,6 +96,98 @@ Future<String> createEntry({
   handleId: handleId,
   input: input,
 );
+
+Future<String> createEntryInGroup({
+  required BigInt handleId,
+  required String groupId,
+  required VaultEntryInput input,
+}) => RustLib.instance.api.crateApiSimpleCreateEntryInGroup(
+  handleId: handleId,
+  groupId: groupId,
+  input: input,
+);
+
+Future<String> createGroup({
+  required BigInt handleId,
+  required String parentId,
+  required String name,
+}) => RustLib.instance.api.crateApiSimpleCreateGroup(
+  handleId: handleId,
+  parentId: parentId,
+  name: name,
+);
+
+Future<void> renameGroup({
+  required BigInt handleId,
+  required String groupId,
+  required String name,
+}) => RustLib.instance.api.crateApiSimpleRenameGroup(
+  handleId: handleId,
+  groupId: groupId,
+  name: name,
+);
+
+Future<void> moveGroup({
+  required BigInt handleId,
+  required String groupId,
+  required String destinationId,
+}) => RustLib.instance.api.crateApiSimpleMoveGroup(
+  handleId: handleId,
+  groupId: groupId,
+  destinationId: destinationId,
+);
+
+Future<void> moveEntry({
+  required BigInt handleId,
+  required String entryId,
+  required String destinationId,
+}) => RustLib.instance.api.crateApiSimpleMoveEntry(
+  handleId: handleId,
+  entryId: entryId,
+  destinationId: destinationId,
+);
+
+Future<String> enableRecycleBin({required BigInt handleId}) =>
+    RustLib.instance.api.crateApiSimpleEnableRecycleBin(handleId: handleId);
+
+Future<void> trashEntry({required BigInt handleId, required String entryId}) =>
+    RustLib.instance.api.crateApiSimpleTrashEntry(
+      handleId: handleId,
+      entryId: entryId,
+    );
+
+Future<void> trashGroup({required BigInt handleId, required String groupId}) =>
+    RustLib.instance.api.crateApiSimpleTrashGroup(
+      handleId: handleId,
+      groupId: groupId,
+    );
+
+Future<void> restoreEntry({
+  required BigInt handleId,
+  required String entryId,
+}) => RustLib.instance.api.crateApiSimpleRestoreEntry(
+  handleId: handleId,
+  entryId: entryId,
+);
+
+Future<void> restoreGroup({
+  required BigInt handleId,
+  required String groupId,
+}) => RustLib.instance.api.crateApiSimpleRestoreGroup(
+  handleId: handleId,
+  groupId: groupId,
+);
+
+Future<void> permanentlyDeleteGroup({
+  required BigInt handleId,
+  required String groupId,
+}) => RustLib.instance.api.crateApiSimplePermanentlyDeleteGroup(
+  handleId: handleId,
+  groupId: groupId,
+);
+
+Future<void> emptyRecycleBin({required BigInt handleId}) =>
+    RustLib.instance.api.crateApiSimpleEmptyRecycleBin(handleId: handleId);
 
 Future<void> updateEntry({
   required BigInt handleId,
@@ -180,6 +275,10 @@ enum BridgeError {
   vaultNotFound,
   vaultAlreadyOpen,
   entryNotFound,
+  groupNotFound,
+  recycleBinDisabled,
+  protectedVaultObject,
+  invalidVaultMove,
   fieldUnavailable,
   wrongPasswordOrInvalidVault,
   fileRead,
@@ -335,6 +434,41 @@ class SyncResult {
           merged == other.merged;
 }
 
+class VaultContentSnapshot {
+  final String rootGroupId;
+  final bool recycleBinEnabled;
+  final String? recycleBinId;
+  final List<VaultGroupView> groups;
+  final List<VaultEntryView> entries;
+
+  const VaultContentSnapshot({
+    required this.rootGroupId,
+    required this.recycleBinEnabled,
+    this.recycleBinId,
+    required this.groups,
+    required this.entries,
+  });
+
+  @override
+  int get hashCode =>
+      rootGroupId.hashCode ^
+      recycleBinEnabled.hashCode ^
+      recycleBinId.hashCode ^
+      groups.hashCode ^
+      entries.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is VaultContentSnapshot &&
+          runtimeType == other.runtimeType &&
+          rootGroupId == other.rootGroupId &&
+          recycleBinEnabled == other.recycleBinEnabled &&
+          recycleBinId == other.recycleBinId &&
+          groups == other.groups &&
+          entries == other.entries;
+}
+
 class VaultEntryInput {
   final VaultEntryKind kind;
   final String title;
@@ -404,6 +538,8 @@ class VaultEntryView {
   final bool hasOtp;
   final List<String> tags;
   final PlatformInt64 modifiedAtUnixMs;
+  final String groupId;
+  final bool isInRecycleBin;
 
   const VaultEntryView({
     required this.id,
@@ -415,6 +551,8 @@ class VaultEntryView {
     required this.hasOtp,
     required this.tags,
     required this.modifiedAtUnixMs,
+    required this.groupId,
+    required this.isInRecycleBin,
   });
 
   @override
@@ -427,7 +565,9 @@ class VaultEntryView {
       hasPassword.hashCode ^
       hasOtp.hashCode ^
       tags.hashCode ^
-      modifiedAtUnixMs.hashCode;
+      modifiedAtUnixMs.hashCode ^
+      groupId.hashCode ^
+      isInRecycleBin.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -442,7 +582,44 @@ class VaultEntryView {
           hasPassword == other.hasPassword &&
           hasOtp == other.hasOtp &&
           tags == other.tags &&
-          modifiedAtUnixMs == other.modifiedAtUnixMs;
+          modifiedAtUnixMs == other.modifiedAtUnixMs &&
+          groupId == other.groupId &&
+          isInRecycleBin == other.isInRecycleBin;
+}
+
+class VaultGroupView {
+  final String id;
+  final String? parentId;
+  final String name;
+  final bool isRoot;
+  final bool isRecycleBin;
+
+  const VaultGroupView({
+    required this.id,
+    this.parentId,
+    required this.name,
+    required this.isRoot,
+    required this.isRecycleBin,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^
+      parentId.hashCode ^
+      name.hashCode ^
+      isRoot.hashCode ^
+      isRecycleBin.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is VaultGroupView &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          parentId == other.parentId &&
+          name == other.name &&
+          isRoot == other.isRoot &&
+          isRecycleBin == other.isRecycleBin;
 }
 
 class VaultHandle {

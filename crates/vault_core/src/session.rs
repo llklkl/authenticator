@@ -11,8 +11,9 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 use crate::{
-    EntrySecretField, KdbxDatabase, KdbxEngine, KdbxEntryRecord, OtpCode, QuickUnlockEnrollment,
-    Result, VaultEntry, VaultError, prepare_quick_unlock, unseal_quick_unlock,
+    EntrySecretField, KdbxContentSnapshot, KdbxDatabase, KdbxEngine, KdbxEntryRecord, OtpCode,
+    QuickUnlockEnrollment, Result, VaultEntry, VaultError, prepare_quick_unlock,
+    unseal_quick_unlock,
 };
 
 /// An unlocked, file-backed vault. Decrypted contents and the master password stay in Rust.
@@ -116,8 +117,17 @@ impl FileVaultSession {
         self.engine.entries(&self.database)
     }
 
+    pub fn content_snapshot(&self) -> KdbxContentSnapshot {
+        self.engine.content_snapshot(&self.database)
+    }
+
     pub fn add_entry(&mut self, entry: &VaultEntry) -> Result<Uuid> {
         self.mutate(|engine, database| engine.add_entry(database, entry))?;
+        Ok(entry.id)
+    }
+
+    pub fn add_entry_to_group(&mut self, group_id: Uuid, entry: &VaultEntry) -> Result<Uuid> {
+        self.mutate(|engine, database| engine.add_entry_to_group(database, group_id, entry))?;
         Ok(entry.id)
     }
 
@@ -136,6 +146,50 @@ impl FileVaultSession {
 
     pub fn remove_entry(&mut self, id: Uuid) -> Result<()> {
         self.mutate(|engine, database| engine.remove_entry(database, id))
+    }
+
+    pub fn create_group(&mut self, parent_id: Uuid, name: &str) -> Result<Uuid> {
+        self.mutate(|engine, database| engine.create_group(database, parent_id, name))
+    }
+
+    pub fn rename_group(&mut self, group_id: Uuid, name: &str) -> Result<()> {
+        self.mutate(|engine, database| engine.rename_group(database, group_id, name))
+    }
+
+    pub fn move_group(&mut self, group_id: Uuid, destination_id: Uuid) -> Result<()> {
+        self.mutate(|engine, database| engine.move_group(database, group_id, destination_id))
+    }
+
+    pub fn move_entry(&mut self, entry_id: Uuid, destination_id: Uuid) -> Result<()> {
+        self.mutate(|engine, database| engine.move_entry(database, entry_id, destination_id))
+    }
+
+    pub fn enable_recycle_bin(&mut self) -> Result<Uuid> {
+        self.mutate(|engine, database| engine.enable_recycle_bin(database))
+    }
+
+    pub fn trash_entry(&mut self, entry_id: Uuid) -> Result<()> {
+        self.mutate(|engine, database| engine.trash_entry(database, entry_id))
+    }
+
+    pub fn trash_group(&mut self, group_id: Uuid) -> Result<()> {
+        self.mutate(|engine, database| engine.trash_group(database, group_id))
+    }
+
+    pub fn restore_entry(&mut self, entry_id: Uuid) -> Result<()> {
+        self.mutate(|engine, database| engine.restore_entry(database, entry_id))
+    }
+
+    pub fn restore_group(&mut self, group_id: Uuid) -> Result<()> {
+        self.mutate(|engine, database| engine.restore_group(database, group_id))
+    }
+
+    pub fn remove_group_permanently(&mut self, group_id: Uuid) -> Result<()> {
+        self.mutate(|engine, database| engine.remove_group_permanently(database, group_id))
+    }
+
+    pub fn empty_recycle_bin(&mut self) -> Result<()> {
+        self.mutate(|engine, database| engine.empty_recycle_bin(database))
     }
 
     pub fn reveal_field(&self, id: Uuid, field: EntrySecretField) -> Result<Zeroizing<String>> {
@@ -179,10 +233,10 @@ impl FileVaultSession {
         Ok(())
     }
 
-    fn mutate(
+    fn mutate<T>(
         &mut self,
-        mutation: impl FnOnce(&KdbxEngine, &mut KdbxDatabase) -> Result<()>,
-    ) -> Result<()> {
+        mutation: impl FnOnce(&KdbxEngine, &mut KdbxDatabase) -> Result<T>,
+    ) -> Result<T> {
         let disk_bytes = Zeroizing::new(fs::read(&self.path).map_err(|_| VaultError::VaultRead)?);
         let mut working = if sha256(&disk_bytes) == self.baseline_sha256 {
             self.database.clone()
@@ -191,14 +245,14 @@ impl FileVaultSession {
             self.engine.merge(&mut disk_database, &self.database)?;
             disk_database
         };
-        mutation(&self.engine, &mut working)?;
+        let output = mutation(&self.engine, &mut working)?;
         let encrypted = self.engine.save(&working, &self.password)?;
 
         self.backup_bytes(&disk_bytes)?;
         atomic_write(&self.path, &encrypted)?;
         self.database = working;
         self.baseline_sha256 = sha256(&encrypted);
-        Ok(())
+        Ok(output)
     }
 
     fn backup_current_file(&self) -> Result<()> {

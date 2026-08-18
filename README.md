@@ -13,12 +13,18 @@ The current offline alpha includes:
   writes, encrypted backups, external-change merge, and restart-safe metadata.
 - Login, OTP, recovery-code, and secure-note CRUD with protected fields kept in
   Rust-owned unlocked sessions.
+- Native nested KDBX folders, entry/folder moves, and a recoverable recycle bin
+  with restore, permanent-delete, and empty-bin operations.
 - Standard `otpauth` and Google Authenticator migration-payload import.
 - Provider-neutral conditional synchronization with ETag retry, encrypted
   backup hooks, remote creation protection, and post-upload verification.
 - On-demand WebDAV sync with credentials retained only for the active request.
-- A responsive Flutter interface for arbitrary independent workspaces, timed
-  clipboard clearing, lifecycle locking, and cross-platform KDBX file picking.
+- A responsive Flutter interface with a compact KeePassXC-inspired desktop
+  tree/table/detail layout, separate password/OTP/other views, multi-workspace
+  switching, a mobile folder/list/detail flow, system light/dark themes, and a
+  custom desktop title bar with native fallback.
+- Passwords hidden by default with explicit reveal, automatic 30-second hiding,
+  timed clipboard clearing, lifecycle locking, and cross-platform KDBX picking.
 - Android strong-biometric quick unlock for explicitly selected workspaces,
   backed by Android Keystore with enrollment invalidation and no device-PIN
   fallback.
