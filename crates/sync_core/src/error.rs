@@ -1,0 +1,25 @@
+use thiserror::Error;
+
+pub type Result<T> = std::result::Result<T, SyncError>;
+
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum SyncError {
+    #[error("the remote vault does not exist")]
+    RemoteNotFound,
+    #[error("the remote revision changed")]
+    PreconditionFailed,
+    #[error("the sync provider failed")]
+    Provider,
+    #[error("the vault merge failed")]
+    Merge,
+    #[error("the encrypted backup failed")]
+    Backup,
+    #[error("the uploaded vault could not be verified")]
+    VerificationFailed,
+    #[error("synchronization did not converge")]
+    RetryLimitReached,
+    #[error("the sync provider configuration is invalid")]
+    InvalidConfiguration,
+    #[error("the sync provider does not support safe conditional writes")]
+    ConditionalWritesUnsupported,
+}

@@ -1,0 +1,33 @@
+# Editors and operating systems
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.iml
+
+# Rust
+/target/
+**/*.rs.bk
+
+# Flutter and Dart
+**/.dart_tool/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+**/build/
+**/coverage/
+
+# Sensitive vault material
+*.kdbx
+*.keyx
+*.key
+*.pem
+*.p12
+*.mobileprovision
+*.jks
+*.keystore
+*.env
+diagnostics/
+
+# Local development state
+.local/
+.cache/

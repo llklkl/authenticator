@@ -1,0 +1,25 @@
+[package]
+name = "rust_lib_authenticator_vault"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "rust_lib_authenticator_vault"
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+flutter_rust_bridge = "=2.12.0"
+sync_core = { path = "../sync_core" }
+tokio = { version = "1", features = ["net", "rt", "time"] }
+vault_core = { path = "../vault_core" }
+zeroize.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }
