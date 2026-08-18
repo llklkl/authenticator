@@ -15,10 +15,16 @@ The current offline alpha includes:
   Rust-owned unlocked sessions.
 - Native nested KDBX folders, entry/folder moves, and a recoverable recycle bin
   with restore, permanent-delete, and empty-bin operations.
+- KeePass built-in/custom icon display, folder icon presets, favorites, tags,
+  recent items, encrypted attachment management, and local password-health
+  checks that expose only entry IDs and risk types to Flutter.
 - Standard `otpauth` and Google Authenticator migration-payload import.
 - Provider-neutral conditional synchronization with ETag retry, encrypted
   backup hooks, remote creation protection, and post-upload verification.
-- On-demand WebDAV sync with credentials retained only for the active request.
+- Per-workspace foreground WebDAV auto-sync with conditional writes, readable
+  status, retry/backoff, optional non-metered-network policy, and passwords
+  stored only through the operating-system credential store when requested.
+- Rust-backed random-password and BIP39-wordlist passphrase generation.
 - A responsive Flutter interface with a compact KeePassXC-inspired desktop
   tree/table/detail layout, separate password/OTP/other views, multi-workspace
   switching, a mobile folder/list/detail flow, system light/dark themes, and a
@@ -32,8 +38,8 @@ The current offline alpha includes:
   overlay, screenshot blocking while sensitive content is active, and disabled
   Android backups.
 
-Camera/image QR decoding, platform autofill, browser companion extensions, and
-attachment support remain under active development.
+Camera/image QR decoding, platform autofill, browser companion extensions,
+attachment preview, and locked background sync remain under active development.
 
 ## Architecture
 
@@ -47,7 +53,9 @@ See [`AGENTS.md`](AGENTS.md) for engineering and security rules.
 ## Development
 
 Prerequisites are the stable Flutter and Rust toolchains plus native platform
-SDKs for each target. The standard checks are:
+SDKs for each target. Linux also requires the `libsecret-1-dev` (Debian/Ubuntu)
+or `libsecret-devel` (Fedora) development package for secure credential
+storage. The standard checks are:
 
 ```sh
 cargo test --workspace

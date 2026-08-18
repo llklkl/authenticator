@@ -11,7 +11,8 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 use crate::{
-    EntrySecretField, KdbxContentSnapshot, KdbxDatabase, KdbxEngine, KdbxEntryRecord, OtpCode,
+    EntrySecretField, KdbxContentSnapshot, KdbxDatabase, KdbxEngine, KdbxEntryRecord,
+    MAX_ATTACHMENT_BYTES, OtpCode, PasswordHealthPolicy, PasswordHealthReport,
     QuickUnlockEnrollment, Result, VaultEntry, VaultError, prepare_quick_unlock,
     unseal_quick_unlock,
 };
@@ -156,6 +157,72 @@ impl FileVaultSession {
         self.mutate(|engine, database| engine.rename_group(database, group_id, name))
     }
 
+    pub fn set_group_icon(&mut self, group_id: Uuid, icon_id: Option<u32>) -> Result<()> {
+        self.mutate(|engine, database| engine.set_group_icon(database, group_id, icon_id))
+    }
+
+    pub fn custom_icon(&self, icon_id: Uuid) -> Result<Vec<u8>> {
+        self.engine.custom_icon(&self.database, icon_id)
+    }
+
+    pub fn set_entry_favorite(&mut self, entry_id: Uuid, favorite: bool) -> Result<()> {
+        self.mutate(|engine, database| engine.set_entry_favorite(database, entry_id, favorite))
+    }
+
+    /// Read an attachment from disk inside Rust and persist it as protected KDBX data.
+    pub fn add_attachment_from_path(
+        &mut self,
+        entry_id: Uuid,
+        attachment_name: &str,
+        source_path: impl AsRef<Path>,
+        replace: bool,
+    ) -> Result<()> {
+        let source_path = source_path.as_ref();
+        let metadata = fs::metadata(source_path).map_err(|_| VaultError::VaultRead)?;
+        if !metadata.is_file()
+            || metadata.len() > u64::try_from(MAX_ATTACHMENT_BYTES).unwrap_or(u64::MAX)
+        {
+            return Err(VaultError::AttachmentLimitExceeded);
+        }
+        let bytes = Zeroizing::new(fs::read(source_path).map_err(|_| VaultError::VaultRead)?);
+        self.mutate(|engine, database| {
+            engine.add_attachment(database, entry_id, attachment_name, bytes.to_vec(), replace)
+        })
+    }
+
+    /// Export an attachment through a sibling temporary file and atomic rename.
+    pub fn export_attachment(
+        &self,
+        entry_id: Uuid,
+        attachment_name: &str,
+        destination_path: impl AsRef<Path>,
+        overwrite: bool,
+    ) -> Result<()> {
+        let bytes = self
+            .engine
+            .attachment(&self.database, entry_id, attachment_name)?;
+        atomic_export(destination_path.as_ref(), &bytes, overwrite)
+    }
+
+    pub fn rename_attachment(
+        &mut self,
+        entry_id: Uuid,
+        old_name: &str,
+        new_name: &str,
+    ) -> Result<()> {
+        self.mutate(|engine, database| {
+            engine.rename_attachment(database, entry_id, old_name, new_name)
+        })
+    }
+
+    pub fn remove_attachment(&mut self, entry_id: Uuid, name: &str) -> Result<()> {
+        self.mutate(|engine, database| engine.remove_attachment(database, entry_id, name))
+    }
+
+    pub fn audit_password_health(&self, policy: PasswordHealthPolicy) -> PasswordHealthReport {
+        self.engine.audit_password_health(&self.database, policy)
+    }
+
     pub fn move_group(&mut self, group_id: Uuid, destination_id: Uuid) -> Result<()> {
         self.mutate(|engine, database| engine.move_group(database, group_id, destination_id))
     }
@@ -287,6 +354,29 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
+fn atomic_export(path: &Path, bytes: &[u8], overwrite: bool) -> Result<()> {
+    let parent = path.parent().ok_or(VaultError::VaultWrite)?;
+    if !parent.is_dir() || (path.exists() && !overwrite) {
+        return Err(VaultError::VaultWrite);
+    }
+    let mut temporary = NamedTempFile::new_in(parent).map_err(|_| VaultError::VaultWrite)?;
+    temporary
+        .write_all(bytes)
+        .and_then(|()| temporary.flush())
+        .and_then(|()| temporary.as_file().sync_all())
+        .map_err(|_| VaultError::VaultWrite)?;
+    if overwrite {
+        temporary
+            .persist(path)
+            .map_err(|_| VaultError::VaultWrite)?;
+    } else {
+        temporary
+            .persist_noclobber(path)
+            .map_err(|_| VaultError::VaultWrite)?;
+    }
+    sync_directory(parent)
+}
+
 #[cfg(unix)]
 fn sync_directory(path: &Path) -> Result<()> {
     File::open(path)
@@ -368,6 +458,40 @@ mod tests {
             FileVaultSession::create(&path, "Personal", "other".into()),
             Err(VaultError::VaultWrite)
         ));
+    }
+
+    #[test]
+    fn imports_and_atomically_exports_protected_attachments() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("personal.kdbx");
+        let source = directory.path().join("source.txt");
+        fs::write(&source, b"attachment secret").unwrap();
+        let mut session =
+            FileVaultSession::create(&path, "Personal", "master password".into()).unwrap();
+        let value = entry("Attachment");
+        session.add_entry(&value).unwrap();
+        session
+            .add_attachment_from_path(value.id, "source.txt", &source, false)
+            .unwrap();
+
+        let destination = directory.path().join("exported.txt");
+        session
+            .export_attachment(value.id, "source.txt", &destination, false)
+            .unwrap();
+        assert_eq!(fs::read(&destination).unwrap(), b"attachment secret");
+        assert_eq!(
+            session.export_attachment(value.id, "source.txt", &destination, false),
+            Err(VaultError::VaultWrite)
+        );
+
+        session
+            .rename_attachment(value.id, "source.txt", "renamed.txt")
+            .unwrap();
+        drop(session);
+        let mut reopened = FileVaultSession::open(&path, "master password".into()).unwrap();
+        assert_eq!(reopened.entries()[0].attachments[0].name, "renamed.txt");
+        reopened.remove_attachment(value.id, "renamed.txt").unwrap();
+        assert!(reopened.entries()[0].attachments.is_empty());
     }
 
     #[test]

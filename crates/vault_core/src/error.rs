@@ -47,6 +47,16 @@ pub enum VaultError {
     ProtectedVaultObject,
     #[error("the requested vault move is invalid")]
     InvalidVaultMove,
+    #[error("the requested vault icon is invalid")]
+    InvalidVaultIcon,
+    #[error("the attachment does not exist")]
+    AttachmentNotFound,
+    #[error("the attachment name is invalid or already used")]
+    InvalidAttachmentName,
+    #[error("the attachment exceeds the configured vault limits")]
+    AttachmentLimitExceeded,
+    #[error("the password generator request is invalid")]
+    InvalidGeneratorRequest,
     #[error("the requested entry field is unavailable")]
     FieldUnavailable,
     #[error("the vault file is already open")]

@@ -9,8 +9,9 @@ use flutter_rust_bridge::frb;
 use sync_core::{FileBackupStore, SyncEngine, SyncError, VaultMerger, WebDavProvider};
 use uuid::Uuid;
 use vault_core::{
-    EntryKind, EntrySecretField, FileVaultSession, OtpConfig, VaultEntry, VaultError,
-    quick_unlock_key, remove_quick_unlock,
+    EntryKind, EntrySecretField, FileVaultSession, KdbxAttachmentRecord, KdbxIconRecord, OtpConfig,
+    PasswordGeneratorRequest, PasswordHealthPolicy, PasswordHealthRisk, VaultEntry, VaultError,
+    generate_password, quick_unlock_key, remove_quick_unlock,
 };
 use zeroize::Zeroizing;
 
@@ -151,6 +152,9 @@ pub struct VaultEntryView {
     pub modified_at_unix_ms: i64,
     pub group_id: String,
     pub is_in_recycle_bin: bool,
+    pub icon: VaultIconView,
+    pub attachments: Vec<VaultAttachmentView>,
+    pub is_favorite: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -160,6 +164,64 @@ pub struct VaultGroupView {
     pub name: String,
     pub is_root: bool,
     pub is_recycle_bin: bool,
+    pub icon: VaultIconView,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VaultIconKind {
+    None,
+    BuiltIn,
+    Custom,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VaultIconView {
+    pub kind: VaultIconKind,
+    pub built_in_id: Option<u32>,
+    pub custom_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VaultAttachmentView {
+    pub name: String,
+    pub size: u64,
+    pub is_protected: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HealthRiskView {
+    Empty,
+    Duplicate,
+    Weak,
+    Stale,
+    MissingOtp,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HealthFindingView {
+    pub entry_id: String,
+    pub risks: Vec<HealthRiskView>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PasswordHealthView {
+    pub findings: Vec<HealthFindingView>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct GeneratedPasswordView {
+    pub value: String,
+    pub entropy_bits: u32,
+}
+
+impl fmt::Debug for GeneratedPasswordView {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("GeneratedPasswordView")
+            .field("value", &"[REDACTED]")
+            .field("entropy_bits", &self.entropy_bits)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -189,6 +251,11 @@ pub enum BridgeError {
     RecycleBinDisabled,
     ProtectedVaultObject,
     InvalidVaultMove,
+    InvalidVaultIcon,
+    AttachmentNotFound,
+    InvalidAttachment,
+    AttachmentLimitExceeded,
+    InvalidGeneratorRequest,
     FieldUnavailable,
     WrongPasswordOrInvalidVault,
     FileRead,
@@ -376,6 +443,7 @@ pub fn vault_content(handle_id: u64) -> Result<VaultContentSnapshot, BridgeError
                 name: group.name,
                 is_root: group.is_root,
                 is_recycle_bin: group.is_recycle_bin,
+                icon: icon_view(group.icon),
             })
             .collect(),
         entries: snapshot.entries.into_iter().map(entry_view).collect(),
@@ -416,6 +484,160 @@ pub fn create_group(
 pub fn rename_group(handle_id: u64, group_id: String, name: String) -> Result<(), BridgeError> {
     let group_id = parse_uuid(&group_id)?;
     with_vault_mut(handle_id, |session| session.rename_group(group_id, &name))
+}
+
+pub fn set_group_icon(
+    handle_id: u64,
+    group_id: String,
+    built_in_icon_id: Option<u32>,
+) -> Result<(), BridgeError> {
+    let group_id = parse_uuid(&group_id)?;
+    with_vault_mut(handle_id, |session| {
+        session.set_group_icon(group_id, built_in_icon_id)
+    })
+}
+
+#[frb(sync)]
+pub fn load_custom_icon(handle_id: u64, custom_icon_id: String) -> Result<Vec<u8>, BridgeError> {
+    let icon_id = parse_uuid(&custom_icon_id)?;
+    let session = get_vault(handle_id)?;
+    let session = session
+        .lock()
+        .map_err(|_| BridgeError::SessionUnavailable)?;
+    session.custom_icon(icon_id).map_err(BridgeError::from)
+}
+
+pub fn set_entry_favorite(
+    handle_id: u64,
+    entry_id: String,
+    favorite: bool,
+) -> Result<(), BridgeError> {
+    let entry_id = parse_uuid(&entry_id)?;
+    with_vault_mut(handle_id, |session| {
+        session.set_entry_favorite(entry_id, favorite)
+    })
+}
+
+pub fn add_entry_attachment(
+    handle_id: u64,
+    entry_id: String,
+    attachment_name: String,
+    source_path: String,
+    replace: bool,
+) -> Result<(), BridgeError> {
+    let entry_id = parse_uuid(&entry_id)?;
+    with_vault_mut(handle_id, |session| {
+        session.add_attachment_from_path(entry_id, &attachment_name, source_path, replace)
+    })
+}
+
+pub fn export_entry_attachment(
+    handle_id: u64,
+    entry_id: String,
+    attachment_name: String,
+    destination_path: String,
+    overwrite: bool,
+) -> Result<(), BridgeError> {
+    let entry_id = parse_uuid(&entry_id)?;
+    let session = get_vault(handle_id)?;
+    let session = session
+        .lock()
+        .map_err(|_| BridgeError::SessionUnavailable)?;
+    session
+        .export_attachment(entry_id, &attachment_name, destination_path, overwrite)
+        .map_err(BridgeError::from)
+}
+
+pub fn rename_entry_attachment(
+    handle_id: u64,
+    entry_id: String,
+    old_name: String,
+    new_name: String,
+) -> Result<(), BridgeError> {
+    let entry_id = parse_uuid(&entry_id)?;
+    with_vault_mut(handle_id, |session| {
+        session.rename_attachment(entry_id, &old_name, &new_name)
+    })
+}
+
+pub fn remove_entry_attachment(
+    handle_id: u64,
+    entry_id: String,
+    attachment_name: String,
+) -> Result<(), BridgeError> {
+    let entry_id = parse_uuid(&entry_id)?;
+    with_vault_mut(handle_id, |session| {
+        session.remove_attachment(entry_id, &attachment_name)
+    })
+}
+
+#[frb(sync)]
+pub fn audit_password_health(
+    handle_id: u64,
+    stale_after_days: Option<u32>,
+    now_unix_ms: i64,
+) -> Result<PasswordHealthView, BridgeError> {
+    let session = get_vault(handle_id)?;
+    let session = session
+        .lock()
+        .map_err(|_| BridgeError::SessionUnavailable)?;
+    let report = session.audit_password_health(PasswordHealthPolicy {
+        stale_after_days,
+        now_unix_ms,
+    });
+    Ok(PasswordHealthView {
+        findings: report
+            .findings
+            .into_iter()
+            .map(|finding| HealthFindingView {
+                entry_id: finding.entry_id.to_string(),
+                risks: finding.risks.into_iter().map(Into::into).collect(),
+            })
+            .collect(),
+    })
+}
+
+#[frb(sync)]
+pub fn generate_random_password(
+    length: u32,
+    lowercase: bool,
+    uppercase: bool,
+    digits: bool,
+    symbols: bool,
+    exclude_ambiguous: bool,
+) -> Result<GeneratedPasswordView, BridgeError> {
+    let generated = generate_password(&PasswordGeneratorRequest::Random {
+        length: usize::try_from(length).map_err(|_| BridgeError::InvalidGeneratorRequest)?,
+        lowercase,
+        uppercase,
+        digits,
+        symbols,
+        exclude_ambiguous,
+    })?;
+    Ok(GeneratedPasswordView {
+        value: generated.value.to_string(),
+        entropy_bits: generated.entropy_bits,
+    })
+}
+
+#[frb(sync)]
+pub fn generate_passphrase(
+    word_count: u32,
+    separator: String,
+    capitalize: bool,
+    include_number: bool,
+) -> Result<GeneratedPasswordView, BridgeError> {
+    let generated = generate_password(&PasswordGeneratorRequest::Passphrase {
+        word_count: usize::try_from(word_count)
+            .map_err(|_| BridgeError::InvalidGeneratorRequest)?,
+        separator,
+        capitalize,
+        include_number,
+    })?;
+    Ok(GeneratedPasswordView {
+        value: generated.value.to_string(),
+        entropy_bits: generated.entropy_bits,
+    })
 }
 
 pub fn move_group(
@@ -743,6 +965,37 @@ fn entry_view(entry: vault_core::KdbxEntryRecord) -> VaultEntryView {
         modified_at_unix_ms: entry.modified_at_unix_ms,
         group_id: entry.group_id.to_string(),
         is_in_recycle_bin: entry.is_in_recycle_bin,
+        icon: icon_view(entry.icon),
+        attachments: entry.attachments.into_iter().map(attachment_view).collect(),
+        is_favorite: entry.is_favorite,
+    }
+}
+
+fn icon_view(icon: KdbxIconRecord) -> VaultIconView {
+    match icon {
+        KdbxIconRecord::None => VaultIconView {
+            kind: VaultIconKind::None,
+            built_in_id: None,
+            custom_id: None,
+        },
+        KdbxIconRecord::BuiltIn(id) => VaultIconView {
+            kind: VaultIconKind::BuiltIn,
+            built_in_id: Some(id),
+            custom_id: None,
+        },
+        KdbxIconRecord::Custom(id) => VaultIconView {
+            kind: VaultIconKind::Custom,
+            built_in_id: None,
+            custom_id: Some(id.to_string()),
+        },
+    }
+}
+
+fn attachment_view(attachment: KdbxAttachmentRecord) -> VaultAttachmentView {
+    VaultAttachmentView {
+        name: attachment.name,
+        size: attachment.size,
+        is_protected: attachment.is_protected,
     }
 }
 
@@ -820,6 +1073,18 @@ impl From<SensitiveField> for EntrySecretField {
     }
 }
 
+impl From<PasswordHealthRisk> for HealthRiskView {
+    fn from(value: PasswordHealthRisk) -> Self {
+        match value {
+            PasswordHealthRisk::Empty => Self::Empty,
+            PasswordHealthRisk::Duplicate => Self::Duplicate,
+            PasswordHealthRisk::Weak => Self::Weak,
+            PasswordHealthRisk::Stale => Self::Stale,
+            PasswordHealthRisk::MissingOtp => Self::MissingOtp,
+        }
+    }
+}
+
 impl From<VaultError> for BridgeError {
     fn from(error: VaultError) -> Self {
         match error {
@@ -839,6 +1104,11 @@ impl From<VaultError> for BridgeError {
             VaultError::RecycleBinDisabled => Self::RecycleBinDisabled,
             VaultError::ProtectedVaultObject => Self::ProtectedVaultObject,
             VaultError::InvalidVaultMove => Self::InvalidVaultMove,
+            VaultError::InvalidVaultIcon => Self::InvalidVaultIcon,
+            VaultError::AttachmentNotFound => Self::AttachmentNotFound,
+            VaultError::InvalidAttachmentName => Self::InvalidAttachment,
+            VaultError::AttachmentLimitExceeded => Self::AttachmentLimitExceeded,
+            VaultError::InvalidGeneratorRequest => Self::InvalidGeneratorRequest,
             VaultError::FieldUnavailable => Self::FieldUnavailable,
             VaultError::VaultAlreadyOpen => Self::VaultAlreadyOpen,
             VaultError::QuickUnlock => Self::QuickUnlockFailed,

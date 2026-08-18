@@ -30,6 +30,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   bool dco_decode_bool(dynamic raw);
 
   @protected
+  int dco_decode_box_autoadd_u_32(dynamic raw);
+
+  @protected
   BigInt dco_decode_box_autoadd_u_64(dynamic raw);
 
   @protected
@@ -39,6 +42,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BridgeError dco_decode_bridge_error(dynamic raw);
 
   @protected
+  GeneratedPasswordView dco_decode_generated_password_view(dynamic raw);
+
+  @protected
+  HealthFindingView dco_decode_health_finding_view(dynamic raw);
+
+  @protected
+  HealthRiskView dco_decode_health_risk_view(dynamic raw);
+
+  @protected
   int dco_decode_i_32(dynamic raw);
 
   @protected
@@ -46,6 +58,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<String> dco_decode_list_String(dynamic raw);
+
+  @protected
+  List<HealthFindingView> dco_decode_list_health_finding_view(dynamic raw);
+
+  @protected
+  List<HealthRiskView> dco_decode_list_health_risk_view(dynamic raw);
 
   @protected
   List<int> dco_decode_list_prim_u_8_loose(dynamic raw);
@@ -60,6 +78,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<QuickUnlockRequest> dco_decode_list_quick_unlock_request(dynamic raw);
 
   @protected
+  List<VaultAttachmentView> dco_decode_list_vault_attachment_view(dynamic raw);
+
+  @protected
   List<VaultEntryView> dco_decode_list_vault_entry_view(dynamic raw);
 
   @protected
@@ -67,6 +88,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   String? dco_decode_opt_String(dynamic raw);
+
+  @protected
+  int? dco_decode_opt_box_autoadd_u_32(dynamic raw);
 
   @protected
   BigInt? dco_decode_opt_box_autoadd_u_64(dynamic raw);
@@ -79,6 +103,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   OtpPreview dco_decode_otp_preview(dynamic raw);
+
+  @protected
+  PasswordHealthView dco_decode_password_health_view(dynamic raw);
 
   @protected
   QuickUnlockBatchResult dco_decode_quick_unlock_batch_result(dynamic raw);
@@ -111,6 +138,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void dco_decode_unit(dynamic raw);
 
   @protected
+  VaultAttachmentView dco_decode_vault_attachment_view(dynamic raw);
+
+  @protected
   VaultContentSnapshot dco_decode_vault_content_snapshot(dynamic raw);
 
   @protected
@@ -129,10 +159,19 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   VaultHandle dco_decode_vault_handle(dynamic raw);
 
   @protected
+  VaultIconKind dco_decode_vault_icon_kind(dynamic raw);
+
+  @protected
+  VaultIconView dco_decode_vault_icon_view(dynamic raw);
+
+  @protected
   String sse_decode_String(SseDeserializer deserializer);
 
   @protected
   bool sse_decode_bool(SseDeserializer deserializer);
+
+  @protected
+  int sse_decode_box_autoadd_u_32(SseDeserializer deserializer);
 
   @protected
   BigInt sse_decode_box_autoadd_u_64(SseDeserializer deserializer);
@@ -146,6 +185,19 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BridgeError sse_decode_bridge_error(SseDeserializer deserializer);
 
   @protected
+  GeneratedPasswordView sse_decode_generated_password_view(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  HealthFindingView sse_decode_health_finding_view(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  HealthRiskView sse_decode_health_risk_view(SseDeserializer deserializer);
+
+  @protected
   int sse_decode_i_32(SseDeserializer deserializer);
 
   @protected
@@ -153,6 +205,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<String> sse_decode_list_String(SseDeserializer deserializer);
+
+  @protected
+  List<HealthFindingView> sse_decode_list_health_finding_view(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<HealthRiskView> sse_decode_list_health_risk_view(
+    SseDeserializer deserializer,
+  );
 
   @protected
   List<int> sse_decode_list_prim_u_8_loose(SseDeserializer deserializer);
@@ -171,6 +233,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  List<VaultAttachmentView> sse_decode_list_vault_attachment_view(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   List<VaultEntryView> sse_decode_list_vault_entry_view(
     SseDeserializer deserializer,
   );
@@ -184,6 +251,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   String? sse_decode_opt_String(SseDeserializer deserializer);
 
   @protected
+  int? sse_decode_opt_box_autoadd_u_32(SseDeserializer deserializer);
+
+  @protected
   BigInt? sse_decode_opt_box_autoadd_u_64(SseDeserializer deserializer);
 
   @protected
@@ -194,6 +264,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   OtpPreview sse_decode_otp_preview(SseDeserializer deserializer);
+
+  @protected
+  PasswordHealthView sse_decode_password_health_view(
+    SseDeserializer deserializer,
+  );
 
   @protected
   QuickUnlockBatchResult sse_decode_quick_unlock_batch_result(
@@ -234,6 +309,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_decode_unit(SseDeserializer deserializer);
 
   @protected
+  VaultAttachmentView sse_decode_vault_attachment_view(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   VaultContentSnapshot sse_decode_vault_content_snapshot(
     SseDeserializer deserializer,
   );
@@ -254,10 +334,19 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   VaultHandle sse_decode_vault_handle(SseDeserializer deserializer);
 
   @protected
+  VaultIconKind sse_decode_vault_icon_kind(SseDeserializer deserializer);
+
+  @protected
+  VaultIconView sse_decode_vault_icon_view(SseDeserializer deserializer);
+
+  @protected
   void sse_encode_String(String self, SseSerializer serializer);
 
   @protected
   void sse_encode_bool(bool self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_u_32(int self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_u_64(BigInt self, SseSerializer serializer);
@@ -272,6 +361,24 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_bridge_error(BridgeError self, SseSerializer serializer);
 
   @protected
+  void sse_encode_generated_password_view(
+    GeneratedPasswordView self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_health_finding_view(
+    HealthFindingView self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_health_risk_view(
+    HealthRiskView self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_i_32(int self, SseSerializer serializer);
 
   @protected
@@ -279,6 +386,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_list_String(List<String> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_health_finding_view(
+    List<HealthFindingView> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_health_risk_view(
+    List<HealthRiskView> self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_list_prim_u_8_loose(List<int> self, SseSerializer serializer);
@@ -302,6 +421,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_vault_attachment_view(
+    List<VaultAttachmentView> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_vault_entry_view(
     List<VaultEntryView> self,
     SseSerializer serializer,
@@ -317,6 +442,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_opt_String(String? self, SseSerializer serializer);
 
   @protected
+  void sse_encode_opt_box_autoadd_u_32(int? self, SseSerializer serializer);
+
+  @protected
   void sse_encode_opt_box_autoadd_u_64(BigInt? self, SseSerializer serializer);
 
   @protected
@@ -330,6 +458,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_otp_preview(OtpPreview self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_password_health_view(
+    PasswordHealthView self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_quick_unlock_batch_result(
@@ -377,6 +511,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_unit(void self, SseSerializer serializer);
 
   @protected
+  void sse_encode_vault_attachment_view(
+    VaultAttachmentView self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_vault_content_snapshot(
     VaultContentSnapshot self,
     SseSerializer serializer,
@@ -408,6 +548,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_vault_handle(VaultHandle self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_vault_icon_kind(VaultIconKind self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_vault_icon_view(VaultIconView self, SseSerializer serializer);
 }
 
 // Section: wire_class

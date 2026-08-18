@@ -1,9 +1,10 @@
-use std::{fmt, io::Cursor};
+use std::{collections::HashMap, fmt, io::Cursor};
 
 use keepass::{
     Database, DatabaseKey,
-    db::{EntryId, GroupId, GroupRef, Times, fields},
+    db::{EntryId, GroupId, GroupRef, Icon, Times, Value, fields},
 };
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
@@ -24,6 +25,23 @@ impl Clone for KdbxDatabase {
 
 const KIND_FIELD: &str = "Authenticator.EntryKind";
 const MODIFIED_AT_FIELD: &str = "Authenticator.ModifiedAtUnixMs";
+const FAVORITE_FIELD: &str = "Authenticator.Favorite";
+pub const MAX_ATTACHMENT_BYTES: usize = 25 * 1024 * 1024;
+pub const MAX_TOTAL_ATTACHMENT_BYTES: usize = 100 * 1024 * 1024;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KdbxIconRecord {
+    None,
+    BuiltIn(u32),
+    Custom(Uuid),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KdbxAttachmentRecord {
+    pub name: String,
+    pub size: u64,
+    pub is_protected: bool,
+}
 
 impl fmt::Debug for KdbxDatabase {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -49,6 +67,9 @@ pub struct KdbxEntryRecord {
     pub modified_at_unix_ms: i64,
     pub group_id: Uuid,
     pub is_in_recycle_bin: bool,
+    pub icon: KdbxIconRecord,
+    pub attachments: Vec<KdbxAttachmentRecord>,
+    pub is_favorite: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,6 +79,33 @@ pub struct KdbxGroupRecord {
     pub name: String,
     pub is_root: bool,
     pub is_recycle_bin: bool,
+    pub icon: KdbxIconRecord,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PasswordHealthPolicy {
+    pub stale_after_days: Option<u32>,
+    pub now_unix_ms: i64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PasswordHealthRisk {
+    Empty,
+    Duplicate,
+    Weak,
+    Stale,
+    MissingOtp,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PasswordHealthFinding {
+    pub entry_id: Uuid,
+    pub risks: Vec<PasswordHealthRisk>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PasswordHealthReport {
+    pub findings: Vec<PasswordHealthFinding>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -163,10 +211,26 @@ impl KdbxEngine {
                 modified_at_unix_ms: entry
                     .get(MODIFIED_AT_FIELD)
                     .and_then(|value| value.parse().ok())
+                    .or_else(|| {
+                        entry
+                            .times
+                            .last_modification
+                            .map(|value| value.and_utc().timestamp_millis())
+                    })
                     .unwrap_or_default(),
                 group_id: entry.parent().id().uuid(),
                 is_in_recycle_bin: recycle_bin_id
                     .is_some_and(|id| group_is_descendant_of(&entry.parent(), id)),
+                icon: icon_record(entry.icon()),
+                attachments: entry
+                    .attachments_named()
+                    .map(|(name, attachment)| KdbxAttachmentRecord {
+                        name: name.to_owned(),
+                        size: u64::try_from(attachment.data.get().len()).unwrap_or(u64::MAX),
+                        is_protected: attachment.data.is_protected(),
+                    })
+                    .collect(),
+                is_favorite: entry.get(FAVORITE_FIELD) == Some("true"),
             })
             .collect()
     }
@@ -233,6 +297,239 @@ impl KdbxEngine {
             .ok_or(VaultError::GroupNotFound)?;
         group.edit_tracking(|tracked| tracked.name = name.trim().to_owned());
         Ok(())
+    }
+
+    pub fn set_group_icon(
+        &self,
+        database: &mut KdbxDatabase,
+        group_id: Uuid,
+        icon_id: Option<u32>,
+    ) -> Result<()> {
+        if icon_id.is_some_and(|value| value > 68) {
+            return Err(VaultError::InvalidVaultIcon);
+        }
+        let group_id = GroupId::from_uuid(group_id);
+        reject_protected_group(&database.inner, group_id)?;
+        let mut group = database
+            .inner
+            .group_mut(group_id)
+            .ok_or(VaultError::GroupNotFound)?;
+        group.edit_tracking(|tracked| {
+            let mut group = tracked.as_mut();
+            if let Some(icon_id) = icon_id {
+                group.set_icon_builtin(icon_id as usize);
+            } else {
+                group.set_icon_none();
+            }
+        });
+        Ok(())
+    }
+
+    pub fn custom_icon(&self, database: &KdbxDatabase, id: Uuid) -> Result<Vec<u8>> {
+        database
+            .inner
+            .iter_all_custom_icons()
+            .find(|icon| icon.id().uuid() == id)
+            .map(|icon| icon.data.clone())
+            .ok_or(VaultError::InvalidVaultIcon)
+    }
+
+    pub fn set_entry_favorite(
+        &self,
+        database: &mut KdbxDatabase,
+        entry_id: Uuid,
+        favorite: bool,
+    ) -> Result<()> {
+        let mut entry = database
+            .inner
+            .entry_mut(EntryId::from_uuid(entry_id))
+            .ok_or(VaultError::EntryNotFound)?;
+        let mut tracked = entry.track_changes();
+        if favorite {
+            tracked.set_unprotected(FAVORITE_FIELD, "true");
+        } else {
+            tracked.fields.remove(FAVORITE_FIELD);
+            tracked.times.last_modification = Some(Times::now());
+        }
+        Ok(())
+    }
+
+    pub fn add_attachment(
+        &self,
+        database: &mut KdbxDatabase,
+        entry_id: Uuid,
+        name: &str,
+        bytes: Vec<u8>,
+        replace: bool,
+    ) -> Result<()> {
+        validate_attachment_name(name)?;
+        if bytes.len() > MAX_ATTACHMENT_BYTES {
+            return Err(VaultError::AttachmentLimitExceeded);
+        }
+        let entry_id = EntryId::from_uuid(entry_id);
+        let entry = database
+            .inner
+            .entry(entry_id)
+            .ok_or(VaultError::EntryNotFound)?;
+        if entry.attachment_by_name(name).is_some() && !replace {
+            return Err(VaultError::InvalidAttachmentName);
+        }
+        let total: usize = database
+            .inner
+            .iter_all_attachments()
+            .map(|attachment| attachment.data.get().len())
+            .sum();
+        // Replacing an attachment keeps the previous value in entry history, so the
+        // conservative total includes both copies until KeePass history is pruned.
+        if total.saturating_add(bytes.len()) > MAX_TOTAL_ATTACHMENT_BYTES {
+            return Err(VaultError::AttachmentLimitExceeded);
+        }
+        let mut entry = database
+            .inner
+            .entry_mut(entry_id)
+            .ok_or(VaultError::EntryNotFound)?;
+        entry
+            .track_changes()
+            .add_attachment(name.to_owned(), Value::protected(bytes));
+        Ok(())
+    }
+
+    pub fn attachment(
+        &self,
+        database: &KdbxDatabase,
+        entry_id: Uuid,
+        name: &str,
+    ) -> Result<Zeroizing<Vec<u8>>> {
+        let entry = database
+            .inner
+            .entry(EntryId::from_uuid(entry_id))
+            .ok_or(VaultError::EntryNotFound)?;
+        let attachment = entry
+            .attachment_by_name(name)
+            .ok_or(VaultError::AttachmentNotFound)?;
+        Ok(Zeroizing::new(attachment.data.get().clone()))
+    }
+
+    pub fn rename_attachment(
+        &self,
+        database: &mut KdbxDatabase,
+        entry_id: Uuid,
+        old_name: &str,
+        new_name: &str,
+    ) -> Result<()> {
+        validate_attachment_name(new_name)?;
+        if old_name == new_name {
+            return Ok(());
+        }
+        let entry_id = EntryId::from_uuid(entry_id);
+        let entry = database
+            .inner
+            .entry(entry_id)
+            .ok_or(VaultError::EntryNotFound)?;
+        if entry.attachment_by_name(new_name).is_some() {
+            return Err(VaultError::InvalidAttachmentName);
+        }
+        let attachment = entry
+            .attachment_by_name(old_name)
+            .ok_or(VaultError::AttachmentNotFound)?;
+        let data = attachment.data.clone();
+        let mut entry = database
+            .inner
+            .entry_mut(entry_id)
+            .ok_or(VaultError::EntryNotFound)?;
+        let mut tracked = entry.track_changes();
+        tracked.as_mut().remove_attachment_by_name(old_name);
+        tracked.add_attachment(new_name.to_owned(), data);
+        Ok(())
+    }
+
+    pub fn remove_attachment(
+        &self,
+        database: &mut KdbxDatabase,
+        entry_id: Uuid,
+        name: &str,
+    ) -> Result<()> {
+        let entry_id = EntryId::from_uuid(entry_id);
+        if database
+            .inner
+            .entry(entry_id)
+            .is_none_or(|entry| entry.attachment_by_name(name).is_none())
+        {
+            return Err(VaultError::AttachmentNotFound);
+        }
+        let mut entry = database
+            .inner
+            .entry_mut(entry_id)
+            .ok_or(VaultError::EntryNotFound)?;
+        entry.edit_tracking(|tracked| tracked.as_mut().remove_attachment_by_name(name));
+        Ok(())
+    }
+
+    pub fn audit_password_health(
+        &self,
+        database: &KdbxDatabase,
+        policy: PasswordHealthPolicy,
+    ) -> PasswordHealthReport {
+        let mut digests: HashMap<[u8; 32], Vec<Uuid>> = HashMap::new();
+        for entry in database.inner.iter_all_entries() {
+            if let Some(password) = entry.get_password().filter(|value| !value.is_empty()) {
+                digests
+                    .entry(Sha256::digest(password.as_bytes()).into())
+                    .or_default()
+                    .push(entry.id().uuid());
+            }
+        }
+        let duplicate_ids: std::collections::HashSet<_> = digests
+            .into_values()
+            .filter(|ids| ids.len() > 1)
+            .flatten()
+            .collect();
+        let findings = database
+            .inner
+            .iter_all_entries()
+            .filter_map(|entry| {
+                if read_kind(&entry) != crate::EntryKind::Login && entry.get_password().is_none() {
+                    return None;
+                }
+                let password = entry.get_password().unwrap_or_default();
+                let mut risks = Vec::new();
+                if password.is_empty() {
+                    risks.push(PasswordHealthRisk::Empty);
+                } else {
+                    if duplicate_ids.contains(&entry.id().uuid()) {
+                        risks.push(PasswordHealthRisk::Duplicate);
+                    }
+                    if password_is_weak(password) {
+                        risks.push(PasswordHealthRisk::Weak);
+                    }
+                    if policy.stale_after_days.is_some_and(|days| {
+                        let modified = entry
+                            .get(MODIFIED_AT_FIELD)
+                            .and_then(|value| value.parse::<i64>().ok())
+                            .or_else(|| {
+                                entry
+                                    .times
+                                    .last_modification
+                                    .map(|value| value.and_utc().timestamp_millis())
+                            });
+                        modified.is_some_and(|modified| {
+                            policy.now_unix_ms.saturating_sub(modified)
+                                > i64::from(days) * 86_400_000
+                        })
+                    }) {
+                        risks.push(PasswordHealthRisk::Stale);
+                    }
+                    if entry.get_raw_otp_value().is_none() {
+                        risks.push(PasswordHealthRisk::MissingOtp);
+                    }
+                }
+                (!risks.is_empty()).then_some(PasswordHealthFinding {
+                    entry_id: entry.id().uuid(),
+                    risks,
+                })
+            })
+            .collect();
+        PasswordHealthReport { findings }
     }
 
     pub fn move_group(
@@ -500,10 +797,48 @@ fn collect_groups(
         name: group.name.clone(),
         is_root: id == root_group_id,
         is_recycle_bin: recycle_bin_id == Some(id),
+        icon: icon_record(group.icon()),
     });
     for child in group.groups() {
         collect_groups(child, root_group_id, recycle_bin_id, groups);
     }
+}
+
+fn icon_record(icon: Option<&Icon>) -> KdbxIconRecord {
+    match icon {
+        None => KdbxIconRecord::None,
+        Some(Icon::BuiltIn(id)) => u32::try_from(*id)
+            .map(KdbxIconRecord::BuiltIn)
+            .unwrap_or(KdbxIconRecord::None),
+        Some(Icon::Custom(id)) => KdbxIconRecord::Custom(id.uuid()),
+    }
+}
+
+fn validate_attachment_name(name: &str) -> Result<()> {
+    let trimmed = name.trim();
+    if trimmed.is_empty()
+        || trimmed.chars().count() > 255
+        || trimmed
+            .chars()
+            .any(|value| value.is_control() || matches!(value, '/' | '\\'))
+    {
+        return Err(VaultError::InvalidAttachmentName);
+    }
+    Ok(())
+}
+
+fn password_is_weak(password: &str) -> bool {
+    let length = password.chars().count();
+    let classes = [
+        password.chars().any(char::is_lowercase),
+        password.chars().any(char::is_uppercase),
+        password.chars().any(|value| value.is_ascii_digit()),
+        password.chars().any(|value| !value.is_alphanumeric()),
+    ]
+    .into_iter()
+    .filter(|value| *value)
+    .count();
+    length < 12 || (length < 20 && classes < 3)
 }
 
 fn group_is_descendant_of(group: &GroupRef<'_>, ancestor_id: GroupId) -> bool {
@@ -635,6 +970,9 @@ mod tests {
                 modified_at_unix_ms: 0,
                 group_id: opened.inner.root().id().uuid(),
                 is_in_recycle_bin: false,
+                icon: KdbxIconRecord::None,
+                attachments: Vec::new(),
+                is_favorite: false,
             }]
         );
         assert!(matches!(
@@ -808,5 +1146,136 @@ mod tests {
             engine.remove_group_permanently(&mut database, recycle_id),
             Err(VaultError::ProtectedVaultObject)
         );
+    }
+
+    #[test]
+    fn round_trips_folder_icons_favorites_and_protected_attachments() {
+        let engine = KdbxEngine;
+        let mut database = engine.create("Personal").unwrap();
+        let root_id = database.inner.root().id().uuid();
+        let group_id = engine
+            .create_group(&mut database, root_id, "Servers")
+            .unwrap();
+        let entry = sample_entry();
+        engine
+            .add_entry_to_group(&mut database, group_id, &entry)
+            .unwrap();
+
+        engine
+            .set_group_icon(&mut database, group_id, Some(3))
+            .unwrap();
+        engine
+            .set_entry_favorite(&mut database, entry.id, true)
+            .unwrap();
+        engine
+            .add_attachment(
+                &mut database,
+                entry.id,
+                "recovery.txt",
+                b"secret attachment".to_vec(),
+                false,
+            )
+            .unwrap();
+        engine
+            .rename_attachment(&mut database, entry.id, "recovery.txt", "backup.txt")
+            .unwrap();
+
+        let encrypted = engine.save(&database, "password").unwrap();
+        let opened = engine.open(&encrypted, "password").unwrap();
+        let snapshot = engine.content_snapshot(&opened);
+        assert_eq!(
+            snapshot
+                .groups
+                .iter()
+                .find(|group| group.id == group_id)
+                .unwrap()
+                .icon,
+            KdbxIconRecord::BuiltIn(3)
+        );
+        let record = snapshot
+            .entries
+            .iter()
+            .find(|record| record.id == entry.id)
+            .unwrap();
+        assert!(record.is_favorite);
+        assert_eq!(record.attachments[0].name, "backup.txt");
+        assert!(record.attachments[0].is_protected);
+        assert_eq!(
+            &*engine.attachment(&opened, entry.id, "backup.txt").unwrap(),
+            b"secret attachment"
+        );
+    }
+
+    #[test]
+    fn attachment_names_and_limits_fail_closed() {
+        let engine = KdbxEngine;
+        let mut database = engine.create("Personal").unwrap();
+        let entry = sample_entry();
+        engine.add_entry(&mut database, &entry).unwrap();
+        assert_eq!(
+            engine.add_attachment(&mut database, entry.id, "../secret", vec![1], false),
+            Err(VaultError::InvalidAttachmentName)
+        );
+        assert_eq!(
+            engine.add_attachment(
+                &mut database,
+                entry.id,
+                "large.bin",
+                vec![0; MAX_ATTACHMENT_BYTES + 1],
+                false,
+            ),
+            Err(VaultError::AttachmentLimitExceeded)
+        );
+    }
+
+    #[test]
+    fn health_report_returns_only_ids_and_risk_types() {
+        let engine = KdbxEngine;
+        let mut database = engine.create("Personal").unwrap();
+        let first = VaultEntry::new(
+            EntryKind::Login,
+            "First".into(),
+            "alice".into(),
+            Zeroizing::new("Duplicate1!".into()),
+            String::new(),
+            Zeroizing::new(String::new()),
+            Vec::new(),
+            None,
+            0,
+        );
+        let mut second = VaultEntry::new(
+            EntryKind::Login,
+            "Second".into(),
+            "bob".into(),
+            Zeroizing::new("Duplicate1!".into()),
+            String::new(),
+            Zeroizing::new(String::new()),
+            Vec::new(),
+            None,
+            0,
+        );
+        second.id = Uuid::new_v4();
+        engine.add_entry(&mut database, &first).unwrap();
+        engine.add_entry(&mut database, &second).unwrap();
+        {
+            let mut root = database.inner.root_mut();
+            let mut otp_only = root.add_entry();
+            otp_only.set_unprotected(KIND_FIELD, "otp");
+            otp_only.set_protected(fields::OTP, "otpauth://totp/Test?secret=JBSWY3DPEHPK3PXP");
+        }
+
+        let report = engine.audit_password_health(
+            &database,
+            PasswordHealthPolicy {
+                stale_after_days: Some(180),
+                now_unix_ms: 181 * 86_400_000,
+            },
+        );
+        assert_eq!(report.findings.len(), 2);
+        for finding in report.findings {
+            assert!(finding.risks.contains(&PasswordHealthRisk::Duplicate));
+            assert!(finding.risks.contains(&PasswordHealthRisk::Weak));
+            assert!(finding.risks.contains(&PasswordHealthRisk::Stale));
+        }
     }
 }

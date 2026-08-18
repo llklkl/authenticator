@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:authenticator_vault/src/features/security/platform_security_service.dart';
 import 'package:authenticator_vault/src/features/vault/vault_service.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 void main() {
   test('workspace name defaults to the selected KDBX file name', () {
@@ -37,8 +38,9 @@ void main() {
       expect(workspaces.single.id, migratedId);
       expect(await File('${registry.path}.bak').exists(), isTrue);
       final versioned = jsonDecode(await registry.readAsString()) as Map;
-      expect(versioned['version'], 1);
+      expect(versioned['version'], 2);
       expect(versioned['autoLockSeconds'], 300);
+      expect(versioned['stalePasswordDays'], 180);
     },
   );
 
@@ -60,5 +62,53 @@ void main() {
       throwsA(isA<WorkspaceRegistryException>()),
     );
     expect(await registry.readAsString(), source);
+  });
+
+  test('WebDAV password is excluded from the workspace registry', () async {
+    FlutterSecureStorage.setMockInitialValues({});
+    final directory = await Directory.systemTemp.createTemp('vault-registry-');
+    addTearDown(() => directory.delete(recursive: true));
+    final registry = File('${directory.path}/workspaces.json');
+    const workspace = WorkspaceInfo(
+      id: '018f47d2-c215-7b71-9c1d-7af181fef264',
+      name: 'Personal',
+      path: '/vault.kdbx',
+    );
+    await registry.writeAsString(
+      jsonEncode({
+        'version': 2,
+        'autoLockSeconds': 300,
+        'stalePasswordDays': 180,
+        'workspaces': [workspace.toJson()],
+      }),
+    );
+    final service = NativeVaultService.forTesting(
+      registryFile: registry,
+      vaultDirectory: directory,
+      platformSecurity: const NoopPlatformSecurityService(),
+      newWorkspaceId: () => 'unused',
+    );
+    final loaded = (await service.loadWorkspaces()).single;
+    await service.saveWorkspaceSync(
+      loaded,
+      const WorkspaceSyncSettings(
+        endpoint: 'https://dav.example.test/vault.kdbx',
+        username: 'alice',
+        passwordStored: true,
+      ),
+      password: 'webdav-secret-value',
+    );
+
+    final source = await registry.readAsString();
+    expect(source, isNot(contains('webdav-secret-value')));
+    expect(source, contains('passwordStored'));
+    expect(
+      await const FlutterSecureStorage().read(
+        key:
+            'authenticator_vault.webdav.'
+            '${workspace.id}.password',
+      ),
+      'webdav-secret-value',
+    );
   });
 }

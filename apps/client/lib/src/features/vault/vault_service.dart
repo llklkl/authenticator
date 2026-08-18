@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:authenticator_vault/src/features/security/platform_security_service.dart';
 import 'package:authenticator_vault/src/rust/api/simple.dart' as native;
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:path_provider/path_provider.dart';
 
 enum EntryType { login, otp, recoveryCodes, secureNote }
@@ -24,12 +25,14 @@ class WorkspaceInfo {
     required this.name,
     required this.path,
     this.quickUnlockEnvelope,
+    this.sync = const WorkspaceSyncSettings(),
   });
 
   final String id;
   final String name;
   final String path;
   final Uint8List? quickUnlockEnvelope;
+  final WorkspaceSyncSettings sync;
 
   bool get quickUnlockEnabled => quickUnlockEnvelope != null;
 
@@ -39,6 +42,7 @@ class WorkspaceInfo {
     'path': path,
     if (quickUnlockEnvelope case final envelope?)
       'quickUnlockEnvelope': base64Encode(envelope),
+    'sync': sync.toJson(),
   };
 
   factory WorkspaceInfo.fromJson(Map<String, Object?> json) => WorkspaceInfo(
@@ -49,11 +53,16 @@ class WorkspaceInfo {
       final String value => Uint8List.fromList(base64Decode(value)),
       _ => null,
     },
+    sync: switch (json['sync']) {
+      final Map<String, Object?> value => WorkspaceSyncSettings.fromJson(value),
+      _ => const WorkspaceSyncSettings(),
+    },
   );
 
   WorkspaceInfo copyWith({
     Uint8List? quickUnlockEnvelope,
     bool clear = false,
+    WorkspaceSyncSettings? sync,
   }) => WorkspaceInfo(
     id: id,
     name: name,
@@ -61,7 +70,67 @@ class WorkspaceInfo {
     quickUnlockEnvelope: clear
         ? null
         : quickUnlockEnvelope ?? this.quickUnlockEnvelope,
+    sync: sync ?? this.sync,
   );
+}
+
+class WorkspaceSyncSettings {
+  const WorkspaceSyncSettings({
+    this.endpoint = '',
+    this.username = '',
+    this.allowInsecureHttp = false,
+    this.autoSync = true,
+    this.nonMeteredOnly = false,
+    this.passwordStored = false,
+  });
+
+  final String endpoint;
+  final String username;
+  final bool allowInsecureHttp;
+  final bool autoSync;
+  final bool nonMeteredOnly;
+  final bool passwordStored;
+
+  bool get configured => endpoint.trim().isNotEmpty;
+
+  Map<String, Object> toJson() => {
+    'endpoint': endpoint,
+    'username': username,
+    'allowInsecureHttp': allowInsecureHttp,
+    'autoSync': autoSync,
+    'nonMeteredOnly': nonMeteredOnly,
+    'passwordStored': passwordStored,
+  };
+
+  factory WorkspaceSyncSettings.fromJson(Map<String, Object?> json) =>
+      WorkspaceSyncSettings(
+        endpoint: json['endpoint'] as String? ?? '',
+        username: json['username'] as String? ?? '',
+        allowInsecureHttp: json['allowInsecureHttp'] as bool? ?? false,
+        autoSync: json['autoSync'] as bool? ?? true,
+        nonMeteredOnly: json['nonMeteredOnly'] as bool? ?? false,
+        passwordStored: json['passwordStored'] as bool? ?? false,
+      );
+}
+
+enum VaultIconType { none, builtIn, custom }
+
+class VaultIconItem {
+  const VaultIconItem({required this.type, this.builtInId, this.customId});
+  final VaultIconType type;
+  final int? builtInId;
+  final String? customId;
+}
+
+class VaultAttachmentItem {
+  const VaultAttachmentItem({
+    required this.name,
+    required this.size,
+    required this.isProtected,
+  });
+  final String name;
+  final int size;
+  final bool isProtected;
 }
 
 class UnlockedWorkspace {
@@ -84,6 +153,9 @@ class VaultEntryItem {
     this.modifiedAtUnixMs = 0,
     this.groupId = '',
     this.isInRecycleBin = false,
+    this.icon = const VaultIconItem(type: VaultIconType.none),
+    this.attachments = const [],
+    this.isFavorite = false,
   });
 
   final String id;
@@ -97,6 +169,9 @@ class VaultEntryItem {
   final int modifiedAtUnixMs;
   final String groupId;
   final bool isInRecycleBin;
+  final VaultIconItem icon;
+  final List<VaultAttachmentItem> attachments;
+  final bool isFavorite;
 }
 
 class VaultGroupItem {
@@ -106,6 +181,7 @@ class VaultGroupItem {
     required this.name,
     required this.isRoot,
     required this.isRecycleBin,
+    this.icon = const VaultIconItem(type: VaultIconType.none),
   });
 
   final String id;
@@ -113,6 +189,21 @@ class VaultGroupItem {
   final String name;
   final bool isRoot;
   final bool isRecycleBin;
+  final VaultIconItem icon;
+}
+
+enum PasswordHealthRisk { empty, duplicate, weak, stale, missingOtp }
+
+class PasswordHealthFinding {
+  const PasswordHealthFinding({required this.entryId, required this.risks});
+  final String entryId;
+  final List<PasswordHealthRisk> risks;
+}
+
+class GeneratedPassword {
+  const GeneratedPassword({required this.value, required this.entropyBits});
+  final String value;
+  final int entropyBits;
 }
 
 class VaultContent {
@@ -252,13 +343,70 @@ abstract interface class StructuredVaultService implements VaultService {
   Future<void> emptyRecycleBin(BigInt handleId);
 }
 
-class NativeVaultService
-    implements SecurityVaultService, StructuredVaultService {
+abstract interface class ProductivityVaultService
+    implements StructuredVaultService, SecurityVaultService {
+  int get stalePasswordDays;
+  Future<void> setStalePasswordDays(int days);
+  Future<void> setGroupIcon(BigInt handleId, String groupId, int? iconId);
+  Future<Uint8List> loadCustomIcon(BigInt handleId, String customIconId);
+  Future<void> setFavorite(BigInt handleId, String entryId, bool favorite);
+  Future<String?> chooseAttachmentFile();
+  Future<String?> chooseAttachmentExportPath(String suggestedName);
+  Future<void> addAttachment(
+    BigInt handleId,
+    String entryId,
+    String name,
+    String sourcePath, {
+    bool replace = false,
+  });
+  Future<void> exportAttachment(
+    BigInt handleId,
+    String entryId,
+    String name,
+    String destinationPath, {
+    bool overwrite = false,
+  });
+  Future<void> renameAttachment(
+    BigInt handleId,
+    String entryId,
+    String oldName,
+    String newName,
+  );
+  Future<void> removeAttachment(BigInt handleId, String entryId, String name);
+  Future<List<PasswordHealthFinding>> passwordHealth(BigInt handleId);
+  Future<GeneratedPassword> generateRandomPassword({
+    int length = 20,
+    bool lowercase = true,
+    bool uppercase = true,
+    bool digits = true,
+    bool symbols = true,
+    bool excludeAmbiguous = true,
+  });
+  Future<GeneratedPassword> generatePassphrase({
+    int wordCount = 6,
+    String separator = '-',
+    bool capitalize = false,
+    bool includeNumber = false,
+  });
+  Future<List<WorkspaceInfo>> saveWorkspaceSync(
+    WorkspaceInfo workspace,
+    WorkspaceSyncSettings settings, {
+    String? password,
+  });
+  Future<SyncSummary> syncConfiguredWorkspace(
+    BigInt handleId,
+    WorkspaceInfo workspace, {
+    String? passwordOverride,
+  });
+}
+
+class NativeVaultService implements ProductivityVaultService {
   NativeVaultService._(
     this._registryFile,
     this._vaultDirectory,
     this.platformSecurity,
     this._newWorkspaceId,
+    this._secureStorage,
   );
 
   NativeVaultService.forTesting({
@@ -266,16 +414,26 @@ class NativeVaultService
     required Directory vaultDirectory,
     required PlatformSecurityService platformSecurity,
     required String Function() newWorkspaceId,
-  }) : this._(registryFile, vaultDirectory, platformSecurity, newWorkspaceId);
+    FlutterSecureStorage? secureStorage,
+  }) : this._(
+         registryFile,
+         vaultDirectory,
+         platformSecurity,
+         newWorkspaceId,
+         secureStorage ?? const FlutterSecureStorage(),
+       );
 
   final File _registryFile;
   final Directory _vaultDirectory;
   @override
   final PlatformSecurityService platformSecurity;
   final String Function() _newWorkspaceId;
+  final FlutterSecureStorage _secureStorage;
   List<WorkspaceInfo>? _cachedWorkspaces;
   @override
   int autoLockSeconds = 300;
+  @override
+  int stalePasswordDays = 180;
 
   static Future<NativeVaultService> create({
     PlatformSecurityService? platformSecurity,
@@ -290,6 +448,7 @@ class NativeVaultService
       vaultDirectory,
       platformSecurity ?? MethodChannelSecurityService(),
       native.generateWorkspaceId,
+      const FlutterSecureStorage(),
     );
   }
 
@@ -318,7 +477,8 @@ class NativeVaultService
         await _writeRegistry(workspaces);
       } else {
         final root = decoded as Map<String, Object?>;
-        if (root['version'] != 1) throw const FormatException();
+        final version = root['version'];
+        if (version != 1 && version != 2) throw const FormatException();
         autoLockSeconds = root['autoLockSeconds']! as int;
         if (!const [0, 30, 60, 300, 900].contains(autoLockSeconds)) {
           throw const FormatException();
@@ -328,6 +488,15 @@ class NativeVaultService
               return WorkspaceInfo.fromJson(value! as Map<String, Object?>);
             })
             .toList(growable: false);
+        if (version == 2) {
+          stalePasswordDays = root['stalePasswordDays'] as int? ?? 180;
+          if (!const [0, 90, 180, 365].contains(stalePasswordDays)) {
+            throw const FormatException();
+          }
+        } else {
+          await _registryFile.copy('${_registryFile.path}.bak');
+          await _writeRegistry(workspaces);
+        }
       }
       if (workspaces.any((item) => item.quickUnlockEnabled) &&
           !await platformSecurity.hasKeyring()) {
@@ -425,6 +594,9 @@ class NativeVaultService
           modifiedAtUnixMs: entry.modifiedAtUnixMs,
           groupId: entry.groupId,
           isInRecycleBin: entry.isInRecycleBin,
+          icon: _fromNativeIcon(entry.icon),
+          attachments: entry.attachments.map(_fromNativeAttachment).toList(),
+          isFavorite: entry.isFavorite,
         ),
       )
       .toList(growable: false);
@@ -444,6 +616,7 @@ class NativeVaultService
               name: group.name,
               isRoot: group.isRoot,
               isRecycleBin: group.isRecycleBin,
+              icon: _fromNativeIcon(group.icon),
             ),
           )
           .toList(growable: false),
@@ -461,6 +634,11 @@ class NativeVaultService
               modifiedAtUnixMs: entry.modifiedAtUnixMs,
               groupId: entry.groupId,
               isInRecycleBin: entry.isInRecycleBin,
+              icon: _fromNativeIcon(entry.icon),
+              attachments: entry.attachments
+                  .map(_fromNativeAttachment)
+                  .toList(),
+              isFavorite: entry.isFavorite,
             ),
           )
           .toList(growable: false),
@@ -542,6 +720,149 @@ class NativeVaultService
   @override
   Future<void> emptyRecycleBin(BigInt handleId) =>
       native.emptyRecycleBin(handleId: handleId);
+
+  @override
+  Future<void> setGroupIcon(BigInt handleId, String groupId, int? iconId) =>
+      native.setGroupIcon(
+        handleId: handleId,
+        groupId: groupId,
+        builtInIconId: iconId,
+      );
+
+  @override
+  Future<Uint8List> loadCustomIcon(
+    BigInt handleId,
+    String customIconId,
+  ) async =>
+      native.loadCustomIcon(handleId: handleId, customIconId: customIconId);
+
+  @override
+  Future<void> setFavorite(BigInt handleId, String entryId, bool favorite) =>
+      native.setEntryFavorite(
+        handleId: handleId,
+        entryId: entryId,
+        favorite: favorite,
+      );
+
+  @override
+  Future<String?> chooseAttachmentFile() async {
+    final result = await FilePicker.platform.pickFiles(allowMultiple: false);
+    return result?.files.single.path;
+  }
+
+  @override
+  Future<String?> chooseAttachmentExportPath(String suggestedName) =>
+      FilePicker.platform.saveFile(fileName: suggestedName);
+
+  @override
+  Future<void> addAttachment(
+    BigInt handleId,
+    String entryId,
+    String name,
+    String sourcePath, {
+    bool replace = false,
+  }) => native.addEntryAttachment(
+    handleId: handleId,
+    entryId: entryId,
+    attachmentName: name,
+    sourcePath: sourcePath,
+    replace: replace,
+  );
+
+  @override
+  Future<void> exportAttachment(
+    BigInt handleId,
+    String entryId,
+    String name,
+    String destinationPath, {
+    bool overwrite = false,
+  }) => native.exportEntryAttachment(
+    handleId: handleId,
+    entryId: entryId,
+    attachmentName: name,
+    destinationPath: destinationPath,
+    overwrite: overwrite,
+  );
+
+  @override
+  Future<void> renameAttachment(
+    BigInt handleId,
+    String entryId,
+    String oldName,
+    String newName,
+  ) => native.renameEntryAttachment(
+    handleId: handleId,
+    entryId: entryId,
+    oldName: oldName,
+    newName: newName,
+  );
+
+  @override
+  Future<void> removeAttachment(BigInt handleId, String entryId, String name) =>
+      native.removeEntryAttachment(
+        handleId: handleId,
+        entryId: entryId,
+        attachmentName: name,
+      );
+
+  @override
+  Future<List<PasswordHealthFinding>> passwordHealth(BigInt handleId) async {
+    final report = native.auditPasswordHealth(
+      handleId: handleId,
+      staleAfterDays: stalePasswordDays == 0 ? null : stalePasswordDays,
+      nowUnixMs: DateTime.now().millisecondsSinceEpoch,
+    );
+    return report.findings
+        .map(
+          (finding) => PasswordHealthFinding(
+            entryId: finding.entryId,
+            risks: finding.risks.map(_fromNativeHealthRisk).toList(),
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  @override
+  Future<GeneratedPassword> generateRandomPassword({
+    int length = 20,
+    bool lowercase = true,
+    bool uppercase = true,
+    bool digits = true,
+    bool symbols = true,
+    bool excludeAmbiguous = true,
+  }) async {
+    final value = native.generateRandomPassword(
+      length: length,
+      lowercase: lowercase,
+      uppercase: uppercase,
+      digits: digits,
+      symbols: symbols,
+      excludeAmbiguous: excludeAmbiguous,
+    );
+    return GeneratedPassword(
+      value: value.value,
+      entropyBits: value.entropyBits,
+    );
+  }
+
+  @override
+  Future<GeneratedPassword> generatePassphrase({
+    int wordCount = 6,
+    String separator = '-',
+    bool capitalize = false,
+    bool includeNumber = false,
+  }) async {
+    final value = native.generatePassphrase(
+      wordCount: wordCount,
+      separator: separator,
+      capitalize: capitalize,
+      includeNumber: includeNumber,
+    );
+    return GeneratedPassword(
+      value: value.value,
+      entropyBits: value.entropyBits,
+    );
+  }
 
   @override
   Future<void> updateEntry(
@@ -630,6 +951,73 @@ class NativeVaultService
     }
     autoLockSeconds = seconds;
     await _writeRegistry(await loadWorkspaces());
+  }
+
+  @override
+  Future<void> setStalePasswordDays(int days) async {
+    if (!const [0, 90, 180, 365].contains(days)) {
+      throw ArgumentError.value(days);
+    }
+    stalePasswordDays = days;
+    await _writeRegistry(await loadWorkspaces());
+  }
+
+  @override
+  Future<List<WorkspaceInfo>> saveWorkspaceSync(
+    WorkspaceInfo workspace,
+    WorkspaceSyncSettings settings, {
+    String? password,
+  }) async {
+    final key = _webDavPasswordKey(workspace.id);
+    final shouldStore =
+        settings.passwordStored && password != null && password.isNotEmpty;
+    if (shouldStore) {
+      await _secureStorage.write(key: key, value: password);
+    } else if (!settings.passwordStored) {
+      await _secureStorage.delete(key: key);
+    }
+    final persisted = WorkspaceSyncSettings(
+      endpoint: settings.endpoint.trim(),
+      username: settings.username,
+      allowInsecureHttp: settings.allowInsecureHttp,
+      autoSync: settings.autoSync,
+      nonMeteredOnly: settings.nonMeteredOnly,
+      passwordStored: settings.passwordStored,
+    );
+    final updated = (await loadWorkspaces())
+        .map(
+          (item) =>
+              item.id == workspace.id ? item.copyWith(sync: persisted) : item,
+        )
+        .toList(growable: false);
+    await _writeRegistry(updated);
+    return updated;
+  }
+
+  @override
+  Future<SyncSummary> syncConfiguredWorkspace(
+    BigInt handleId,
+    WorkspaceInfo workspace, {
+    String? passwordOverride,
+  }) async {
+    final config = workspace.sync;
+    if (!config.configured) throw StateError('sync is not configured');
+    final password = passwordOverride?.isNotEmpty == true
+        ? passwordOverride
+        : await _secureStorage.read(key: _webDavPasswordKey(workspace.id));
+    if (password == null || password.isEmpty) {
+      throw StateError('sync credentials are unavailable');
+    }
+    return syncWebDav(
+      handleId,
+      workspace.id,
+      WebDavSettings(
+        endpoint: config.endpoint,
+        username: config.username,
+        password: password,
+        allowInsecureHttp: config.allowInsecureHttp,
+      ),
+    );
   }
 
   @override
@@ -772,8 +1160,9 @@ class NativeVaultService
     final temporary = File('${_registryFile.path}.tmp');
     await temporary.writeAsString(
       jsonEncode({
-        'version': 1,
+        'version': 2,
         'autoLockSeconds': autoLockSeconds,
+        'stalePasswordDays': stalePasswordDays,
         'workspaces': workspaces.map((item) => item.toJson()).toList(),
       }),
       flush: true,
@@ -808,3 +1197,32 @@ EntryType _fromNativeKind(native.VaultEntryKind kind) => switch (kind) {
   native.VaultEntryKind.recoveryCodes => EntryType.recoveryCodes,
   native.VaultEntryKind.secureNote => EntryType.secureNote,
 };
+
+VaultIconItem _fromNativeIcon(native.VaultIconView icon) => VaultIconItem(
+  type: switch (icon.kind) {
+    native.VaultIconKind.none => VaultIconType.none,
+    native.VaultIconKind.builtIn => VaultIconType.builtIn,
+    native.VaultIconKind.custom => VaultIconType.custom,
+  },
+  builtInId: icon.builtInId?.toInt(),
+  customId: icon.customId,
+);
+
+VaultAttachmentItem _fromNativeAttachment(native.VaultAttachmentView value) =>
+    VaultAttachmentItem(
+      name: value.name,
+      size: value.size.toInt(),
+      isProtected: value.isProtected,
+    );
+
+PasswordHealthRisk _fromNativeHealthRisk(native.HealthRiskView value) =>
+    switch (value) {
+      native.HealthRiskView.empty => PasswordHealthRisk.empty,
+      native.HealthRiskView.duplicate => PasswordHealthRisk.duplicate,
+      native.HealthRiskView.weak => PasswordHealthRisk.weak,
+      native.HealthRiskView.stale => PasswordHealthRisk.stale,
+      native.HealthRiskView.missingOtp => PasswordHealthRisk.missingOtp,
+    };
+
+String _webDavPasswordKey(String workspaceId) =>
+    'authenticator_vault.webdav.$workspaceId.password';

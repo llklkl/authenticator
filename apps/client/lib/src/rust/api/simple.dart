@@ -7,9 +7,9 @@ import '../frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `ensure_path_available`, `entry_view`, `get_vault`, `insert_vault_session`, `into_entry`, `parse_uuid`, `path_identity`, `read_vault_sessions`, `with_vault_mut`, `write_vault_sessions`
+// These functions are ignored because they are not marked as `pub`: `attachment_view`, `ensure_path_available`, `entry_view`, `get_vault`, `icon_view`, `insert_vault_session`, `into_entry`, `parse_uuid`, `path_identity`, `read_vault_sessions`, `with_vault_mut`, `write_vault_sessions`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `OtpSessions`, `SessionVaultMerger`, `VaultSessions`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `merge`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `merge`
 // These functions are ignored (category: IgnoreBecauseOwnerTyShouldIgnore): `default`, `default`
 
 /// Create and unlock a new KDBX workspace. Existing files are never overwritten.
@@ -125,6 +125,122 @@ Future<void> renameGroup({
   handleId: handleId,
   groupId: groupId,
   name: name,
+);
+
+Future<void> setGroupIcon({
+  required BigInt handleId,
+  required String groupId,
+  int? builtInIconId,
+}) => RustLib.instance.api.crateApiSimpleSetGroupIcon(
+  handleId: handleId,
+  groupId: groupId,
+  builtInIconId: builtInIconId,
+);
+
+Uint8List loadCustomIcon({
+  required BigInt handleId,
+  required String customIconId,
+}) => RustLib.instance.api.crateApiSimpleLoadCustomIcon(
+  handleId: handleId,
+  customIconId: customIconId,
+);
+
+Future<void> setEntryFavorite({
+  required BigInt handleId,
+  required String entryId,
+  required bool favorite,
+}) => RustLib.instance.api.crateApiSimpleSetEntryFavorite(
+  handleId: handleId,
+  entryId: entryId,
+  favorite: favorite,
+);
+
+Future<void> addEntryAttachment({
+  required BigInt handleId,
+  required String entryId,
+  required String attachmentName,
+  required String sourcePath,
+  required bool replace,
+}) => RustLib.instance.api.crateApiSimpleAddEntryAttachment(
+  handleId: handleId,
+  entryId: entryId,
+  attachmentName: attachmentName,
+  sourcePath: sourcePath,
+  replace: replace,
+);
+
+Future<void> exportEntryAttachment({
+  required BigInt handleId,
+  required String entryId,
+  required String attachmentName,
+  required String destinationPath,
+  required bool overwrite,
+}) => RustLib.instance.api.crateApiSimpleExportEntryAttachment(
+  handleId: handleId,
+  entryId: entryId,
+  attachmentName: attachmentName,
+  destinationPath: destinationPath,
+  overwrite: overwrite,
+);
+
+Future<void> renameEntryAttachment({
+  required BigInt handleId,
+  required String entryId,
+  required String oldName,
+  required String newName,
+}) => RustLib.instance.api.crateApiSimpleRenameEntryAttachment(
+  handleId: handleId,
+  entryId: entryId,
+  oldName: oldName,
+  newName: newName,
+);
+
+Future<void> removeEntryAttachment({
+  required BigInt handleId,
+  required String entryId,
+  required String attachmentName,
+}) => RustLib.instance.api.crateApiSimpleRemoveEntryAttachment(
+  handleId: handleId,
+  entryId: entryId,
+  attachmentName: attachmentName,
+);
+
+PasswordHealthView auditPasswordHealth({
+  required BigInt handleId,
+  int? staleAfterDays,
+  required PlatformInt64 nowUnixMs,
+}) => RustLib.instance.api.crateApiSimpleAuditPasswordHealth(
+  handleId: handleId,
+  staleAfterDays: staleAfterDays,
+  nowUnixMs: nowUnixMs,
+);
+
+GeneratedPasswordView generateRandomPassword({
+  required int length,
+  required bool lowercase,
+  required bool uppercase,
+  required bool digits,
+  required bool symbols,
+  required bool excludeAmbiguous,
+}) => RustLib.instance.api.crateApiSimpleGenerateRandomPassword(
+  length: length,
+  lowercase: lowercase,
+  uppercase: uppercase,
+  digits: digits,
+  symbols: symbols,
+  excludeAmbiguous: excludeAmbiguous,
+);
+
+GeneratedPasswordView generatePassphrase({
+  required int wordCount,
+  required String separator,
+  required bool capitalize,
+  required bool includeNumber,
+}) => RustLib.instance.api.crateApiSimpleGeneratePassphrase(
+  wordCount: wordCount,
+  separator: separator,
+  capitalize: capitalize,
+  includeNumber: includeNumber,
 );
 
 Future<void> moveGroup({
@@ -279,6 +395,11 @@ enum BridgeError {
   recycleBinDisabled,
   protectedVaultObject,
   invalidVaultMove,
+  invalidVaultIcon,
+  attachmentNotFound,
+  invalidAttachment,
+  attachmentLimitExceeded,
+  invalidGeneratorRequest,
   fieldUnavailable,
   wrongPasswordOrInvalidVault,
   fileRead,
@@ -287,6 +408,44 @@ enum BridgeError {
   syncFailed,
   quickUnlockFailed,
 }
+
+class GeneratedPasswordView {
+  final String value;
+  final int entropyBits;
+
+  const GeneratedPasswordView({required this.value, required this.entropyBits});
+
+  @override
+  int get hashCode => value.hashCode ^ entropyBits.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is GeneratedPasswordView &&
+          runtimeType == other.runtimeType &&
+          value == other.value &&
+          entropyBits == other.entropyBits;
+}
+
+class HealthFindingView {
+  final String entryId;
+  final List<HealthRiskView> risks;
+
+  const HealthFindingView({required this.entryId, required this.risks});
+
+  @override
+  int get hashCode => entryId.hashCode ^ risks.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is HealthFindingView &&
+          runtimeType == other.runtimeType &&
+          entryId == other.entryId &&
+          risks == other.risks;
+}
+
+enum HealthRiskView { empty, duplicate, weak, stale, missingOtp }
 
 class OtpHandle {
   final BigInt id;
@@ -328,6 +487,22 @@ class OtpPreview {
           runtimeType == other.runtimeType &&
           code == other.code &&
           validForSeconds == other.validForSeconds;
+}
+
+class PasswordHealthView {
+  final List<HealthFindingView> findings;
+
+  const PasswordHealthView({required this.findings});
+
+  @override
+  int get hashCode => findings.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is PasswordHealthView &&
+          runtimeType == other.runtimeType &&
+          findings == other.findings;
 }
 
 class QuickUnlockBatchResult {
@@ -432,6 +607,30 @@ class SyncResult {
           runtimeType == other.runtimeType &&
           attempts == other.attempts &&
           merged == other.merged;
+}
+
+class VaultAttachmentView {
+  final String name;
+  final BigInt size;
+  final bool isProtected;
+
+  const VaultAttachmentView({
+    required this.name,
+    required this.size,
+    required this.isProtected,
+  });
+
+  @override
+  int get hashCode => name.hashCode ^ size.hashCode ^ isProtected.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is VaultAttachmentView &&
+          runtimeType == other.runtimeType &&
+          name == other.name &&
+          size == other.size &&
+          isProtected == other.isProtected;
 }
 
 class VaultContentSnapshot {
@@ -540,6 +739,9 @@ class VaultEntryView {
   final PlatformInt64 modifiedAtUnixMs;
   final String groupId;
   final bool isInRecycleBin;
+  final VaultIconView icon;
+  final List<VaultAttachmentView> attachments;
+  final bool isFavorite;
 
   const VaultEntryView({
     required this.id,
@@ -553,6 +755,9 @@ class VaultEntryView {
     required this.modifiedAtUnixMs,
     required this.groupId,
     required this.isInRecycleBin,
+    required this.icon,
+    required this.attachments,
+    required this.isFavorite,
   });
 
   @override
@@ -567,7 +772,10 @@ class VaultEntryView {
       tags.hashCode ^
       modifiedAtUnixMs.hashCode ^
       groupId.hashCode ^
-      isInRecycleBin.hashCode;
+      isInRecycleBin.hashCode ^
+      icon.hashCode ^
+      attachments.hashCode ^
+      isFavorite.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -584,7 +792,10 @@ class VaultEntryView {
           tags == other.tags &&
           modifiedAtUnixMs == other.modifiedAtUnixMs &&
           groupId == other.groupId &&
-          isInRecycleBin == other.isInRecycleBin;
+          isInRecycleBin == other.isInRecycleBin &&
+          icon == other.icon &&
+          attachments == other.attachments &&
+          isFavorite == other.isFavorite;
 }
 
 class VaultGroupView {
@@ -593,6 +804,7 @@ class VaultGroupView {
   final String name;
   final bool isRoot;
   final bool isRecycleBin;
+  final VaultIconView icon;
 
   const VaultGroupView({
     required this.id,
@@ -600,6 +812,7 @@ class VaultGroupView {
     required this.name,
     required this.isRoot,
     required this.isRecycleBin,
+    required this.icon,
   });
 
   @override
@@ -608,7 +821,8 @@ class VaultGroupView {
       parentId.hashCode ^
       name.hashCode ^
       isRoot.hashCode ^
-      isRecycleBin.hashCode;
+      isRecycleBin.hashCode ^
+      icon.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -619,7 +833,8 @@ class VaultGroupView {
           parentId == other.parentId &&
           name == other.name &&
           isRoot == other.isRoot &&
-          isRecycleBin == other.isRecycleBin;
+          isRecycleBin == other.isRecycleBin &&
+          icon == other.icon;
 }
 
 class VaultHandle {
@@ -636,4 +851,26 @@ class VaultHandle {
       other is VaultHandle &&
           runtimeType == other.runtimeType &&
           id == other.id;
+}
+
+enum VaultIconKind { none, builtIn, custom }
+
+class VaultIconView {
+  final VaultIconKind kind;
+  final int? builtInId;
+  final String? customId;
+
+  const VaultIconView({required this.kind, this.builtInId, this.customId});
+
+  @override
+  int get hashCode => kind.hashCode ^ builtInId.hashCode ^ customId.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is VaultIconView &&
+          runtimeType == other.runtimeType &&
+          kind == other.kind &&
+          builtInId == other.builtInId &&
+          customId == other.customId;
 }

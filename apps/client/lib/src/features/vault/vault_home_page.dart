@@ -1,12 +1,26 @@
 import 'dart:async';
 
+import 'package:authenticator_vault/src/features/settings/settings_page.dart';
 import 'package:authenticator_vault/src/features/security/platform_security_service.dart';
 import 'package:authenticator_vault/src/features/vault/desktop_title_bar.dart';
 import 'package:authenticator_vault/src/features/vault/vault_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 
 enum _VaultSection { passwords, otp, other }
+
+enum _SmartFilter { none, favorites, recent }
+
+enum _WorkspaceSyncState {
+  unconfigured,
+  credentialsNeeded,
+  waitingNetwork,
+  pending,
+  syncing,
+  synced,
+  failed,
+}
 
 class VaultHomePage extends StatefulWidget {
   const VaultHomePage({required this.vaultService, super.key});
@@ -31,6 +45,8 @@ class _VaultHomePageState extends State<VaultHomePage>
   String? _selectedEntryId;
   String? _revealedPassword;
   _VaultSection _section = _VaultSection.passwords;
+  _SmartFilter _smartFilter = _SmartFilter.none;
+  String? _selectedTag;
   double _treeWidth = 260;
   double _listFraction = 0.58;
   bool _loading = true;
@@ -40,6 +56,14 @@ class _VaultHomePageState extends State<VaultHomePage>
   Timer? _passwordHideTimer;
   Stopwatch? _backgroundElapsed;
   StreamSubscription<void>? _screenOffSubscription;
+  StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
+  Timer? _periodicSyncTimer;
+  final _syncTimers = <String, Timer>{};
+  final _syncStates = <String, _WorkspaceSyncState>{};
+  final _syncAttempts = <String, int>{};
+  final _syncing = <String>{};
+  final _customIconLoads = <String, Future<Uint8List>>{};
+  bool _foreground = true;
   late final SecurityCoordinator _securityCoordinator;
 
   SecurityVaultService? get _securityService =>
@@ -64,6 +88,10 @@ class _VaultHomePageState extends State<VaultHomePage>
       widget.vaultService is StructuredVaultService
       ? widget.vaultService as StructuredVaultService
       : null;
+  ProductivityVaultService? get _productivityService =>
+      widget.vaultService is ProductivityVaultService
+      ? widget.vaultService as ProductivityVaultService
+      : null;
 
   @override
   void initState() {
@@ -76,6 +104,13 @@ class _VaultHomePageState extends State<VaultHomePage>
         .listen((_) => unawaited(_lockAll()));
     unawaited(_loadWorkspaces());
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) => _refreshOtp());
+    _connectivitySubscription = Connectivity().onConnectivityChanged.listen(
+      (_) => _scheduleAllAutoSync(const Duration(seconds: 2)),
+    );
+    _periodicSyncTimer = Timer.periodic(
+      const Duration(minutes: 5),
+      (_) => _scheduleAllAutoSync(Duration.zero),
+    );
   }
 
   @override
@@ -84,10 +119,12 @@ class _VaultHomePageState extends State<VaultHomePage>
         state == AppLifecycleState.hidden ||
         state == AppLifecycleState.detached) {
       _hidePassword();
+      _foreground = false;
       _backgroundElapsed ??= Stopwatch()..start();
       if (mounted) setState(() => _privacyOverlay = true);
       unawaited(_securityCoordinator.setBackgrounded(true));
     } else if (state == AppLifecycleState.resumed) {
+      _foreground = true;
       unawaited(_resumeFromBackground());
     }
   }
@@ -105,6 +142,7 @@ class _VaultHomePageState extends State<VaultHomePage>
       await _lockAll();
     }
     await _securityCoordinator.setBackgrounded(false);
+    _scheduleAllAutoSync(const Duration(seconds: 2));
     if (mounted) setState(() => _privacyOverlay = false);
   }
 
@@ -114,6 +152,11 @@ class _VaultHomePageState extends State<VaultHomePage>
     _ticker?.cancel();
     _passwordHideTimer?.cancel();
     unawaited(_screenOffSubscription?.cancel());
+    unawaited(_connectivitySubscription?.cancel());
+    _periodicSyncTimer?.cancel();
+    for (final timer in _syncTimers.values) {
+      timer.cancel();
+    }
     _searchController.dispose();
     unawaited(widget.vaultService.lockAll());
     super.dispose();
@@ -217,11 +260,20 @@ class _VaultHomePageState extends State<VaultHomePage>
       _passwordHideTimer?.cancel();
       _passwordHideTimer = null;
       _revealedPassword = null;
+      _syncing.clear();
+      _customIconLoads.clear();
     });
+    for (final timer in _syncTimers.values) {
+      timer.cancel();
+    }
+    _syncTimers.clear();
+    PaintingBinding.instance.imageCache
+      ..clear()
+      ..clearLiveImages();
     await _securityCoordinator.setUnlockedCount(0);
   }
 
-  Future<void> _refreshEntries() async {
+  Future<void> _refreshEntries({bool scheduleSync = true}) async {
     final handle = _selectedHandle;
     final workspace = _selected;
     if (handle == null || workspace == null) return;
@@ -247,6 +299,9 @@ class _VaultHomePageState extends State<VaultHomePage>
       }
     });
     await _refreshOtp();
+    if (scheduleSync) {
+      _scheduleAutoSync(workspace.id, const Duration(seconds: 2));
+    }
   }
 
   Future<void> _refreshOtp() async {
@@ -307,32 +362,113 @@ class _VaultHomePageState extends State<VaultHomePage>
     }, success: 'OTP 已写入加密 Vault。');
   }
 
-  Future<void> _syncWebDav() async {
-    final handle = _selectedHandle;
-    final workspace = _selected;
-    if (handle == null || workspace == null) return;
-    final settings = await _sensitiveDialog<WebDavSettings>(
-      builder: (_) => const _WebDavDialog(),
-    );
-    if (settings == null || !mounted) return;
-    await _guarded(() async {
-      final result = await widget.vaultService.syncWebDav(
-        handle,
-        workspace.id,
-        settings,
-      );
-      await _refreshEntries();
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            result.merged
-                ? '同步完成：已合并远端变更（${result.attempts} 次尝试）。'
-                : '同步完成（${result.attempts} 次尝试）。',
-          ),
+  Future<void> _openSettings() async {
+    final service = _productivityService;
+    if (service == null) return;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => SettingsPage(
+          service: service,
+          workspaces: _workspaces,
+          selectedWorkspaceId: _selectedId,
+          handles: Map.of(_handles),
+          onWorkspacesChanged: (value) {
+            if (mounted) setState(() => _workspaces = value);
+          },
+          onVaultChanged: () => unawaited(_refreshEntries(scheduleSync: false)),
         ),
-      );
-    });
+      ),
+    );
+    if (mounted) {
+      setState(() {});
+      _scheduleAllAutoSync(const Duration(seconds: 2));
+    }
+  }
+
+  void _scheduleAllAutoSync(Duration delay) {
+    for (final workspace in _workspaces) {
+      if (_handles.containsKey(workspace.id)) {
+        _scheduleAutoSync(workspace.id, delay);
+      }
+    }
+  }
+
+  void _scheduleAutoSync(String workspaceId, Duration delay) {
+    final workspace = _workspaces
+        .where((item) => item.id == workspaceId)
+        .firstOrNull;
+    if (!_foreground ||
+        workspace == null ||
+        !workspace.sync.configured ||
+        !workspace.sync.autoSync ||
+        !_handles.containsKey(workspaceId) ||
+        _productivityService == null) {
+      if (workspace != null && !workspace.sync.configured) {
+        _setSyncState(workspaceId, _WorkspaceSyncState.unconfigured);
+      }
+      return;
+    }
+    if (!workspace.sync.passwordStored) {
+      _setSyncState(workspaceId, _WorkspaceSyncState.credentialsNeeded);
+      return;
+    }
+    _syncTimers[workspaceId]?.cancel();
+    _setSyncState(workspaceId, _WorkspaceSyncState.pending);
+    _syncTimers[workspaceId] = Timer(
+      delay,
+      () => unawaited(_runAutoSync(workspaceId)),
+    );
+  }
+
+  Future<void> _runAutoSync(String workspaceId) async {
+    if (!_foreground || _syncing.contains(workspaceId)) return;
+    final service = _productivityService;
+    final workspace = _workspaces
+        .where((item) => item.id == workspaceId)
+        .firstOrNull;
+    final handle = _handles[workspaceId];
+    if (service == null || workspace == null || handle == null) return;
+    final connections = await Connectivity().checkConnectivity();
+    final offline =
+        connections.isEmpty || connections.contains(ConnectivityResult.none);
+    final metered = connections.contains(ConnectivityResult.mobile);
+    if (offline || (workspace.sync.nonMeteredOnly && metered)) {
+      _setSyncState(workspaceId, _WorkspaceSyncState.waitingNetwork);
+      return;
+    }
+    _syncing.add(workspaceId);
+    _setSyncState(workspaceId, _WorkspaceSyncState.syncing);
+    try {
+      await service.syncConfiguredWorkspace(handle, workspace);
+      _syncAttempts[workspaceId] = 0;
+      _setSyncState(workspaceId, _WorkspaceSyncState.synced);
+      if (workspaceId == _selectedId) {
+        await _refreshEntries(scheduleSync: false);
+      }
+    } on StateError {
+      _syncAttempts[workspaceId] = 0;
+      _setSyncState(workspaceId, _WorkspaceSyncState.credentialsNeeded);
+    } on Object {
+      final attempt = (_syncAttempts[workspaceId] ?? 0) + 1;
+      _syncAttempts[workspaceId] = attempt;
+      _setSyncState(workspaceId, _WorkspaceSyncState.failed);
+      const retries = [5, 30, 120, 600, 900];
+      final seconds = retries[(attempt - 1).clamp(0, retries.length - 1)];
+      if (_foreground) {
+        _syncTimers[workspaceId]?.cancel();
+        _syncTimers[workspaceId] = Timer(
+          Duration(seconds: seconds),
+          () => unawaited(_runAutoSync(workspaceId)),
+        );
+      }
+    } finally {
+      _syncing.remove(workspaceId);
+    }
+  }
+
+  void _setSyncState(String workspaceId, _WorkspaceSyncState state) {
+    if (!mounted || _syncStates[workspaceId] == state) return;
+    setState(() => _syncStates[workspaceId] = state);
   }
 
   Future<void> _editEntry(VaultEntryItem item) async {
@@ -500,6 +636,8 @@ class _VaultHomePageState extends State<VaultHomePage>
     setState(() {
       _selectedId = id;
       _selectedEntryId = null;
+      _smartFilter = _SmartFilter.none;
+      _selectedTag = null;
     });
     if (_handles.containsKey(id) &&
         (!_entries.containsKey(id) ||
@@ -517,6 +655,8 @@ class _VaultHomePageState extends State<VaultHomePage>
     setState(() {
       _selectedGroups[workspaceId] = groupId;
       _selectedEntryId = null;
+      _smartFilter = _SmartFilter.none;
+      _selectedTag = null;
     });
   }
 
@@ -551,6 +691,125 @@ class _VaultHomePageState extends State<VaultHomePage>
     );
     controller.dispose();
     return value?.trim();
+  }
+
+  Future<void> _chooseFolderIcon(VaultGroupItem group) async {
+    final service = _productivityService;
+    final handle = _selectedHandle;
+    if (service == null || handle == null) return;
+    final selected = await showDialog<int>(
+      context: context,
+      builder: (context) => _FolderIconDialog(current: group.icon.builtInId),
+    );
+    if (!mounted || selected == null || selected == -2) return;
+    await _guarded(() async {
+      await service.setGroupIcon(
+        handle,
+        group.id,
+        selected == -1 ? null : selected,
+      );
+      await _refreshEntries();
+    }, success: '文件夹图标已更新。');
+  }
+
+  Future<void> _toggleFavorite(VaultEntryItem item) async {
+    final service = _productivityService;
+    final handle = _selectedHandle;
+    if (service == null || handle == null) return;
+    await _guarded(() async {
+      await service.setFavorite(handle, item.id, !item.isFavorite);
+      await _refreshEntries();
+    });
+  }
+
+  Future<void> _addAttachment(VaultEntryItem item) async {
+    final service = _productivityService;
+    final handle = _selectedHandle;
+    if (service == null || handle == null) return;
+    final path = await service.chooseAttachmentFile();
+    if (path == null || !mounted) return;
+    final name = path.replaceAll('\\', '/').split('/').last;
+    await _guarded(() async {
+      await service.addAttachment(handle, item.id, name, path);
+      await _refreshEntries();
+    }, success: '附件已加密保存到 KDBX。');
+  }
+
+  Future<void> _exportAttachment(
+    VaultEntryItem item,
+    VaultAttachmentItem attachment,
+  ) async {
+    final service = _productivityService;
+    final handle = _selectedHandle;
+    if (service == null || handle == null) return;
+    final destination = await service.chooseAttachmentExportPath(
+      attachment.name,
+    );
+    if (destination == null || !mounted) return;
+    await _guarded(() async {
+      await service.exportAttachment(
+        handle,
+        item.id,
+        attachment.name,
+        destination,
+      );
+    }, success: '附件已导出。');
+  }
+
+  Future<void> _renameAttachment(
+    VaultEntryItem item,
+    VaultAttachmentItem attachment,
+  ) async {
+    final service = _productivityService;
+    final handle = _selectedHandle;
+    if (service == null || handle == null) return;
+    final name = await _askName('重命名附件', initial: attachment.name);
+    if (name == null || !mounted) return;
+    await _guarded(() async {
+      await service.renameAttachment(handle, item.id, attachment.name, name);
+      await _refreshEntries();
+    });
+  }
+
+  Future<void> _removeAttachment(
+    VaultEntryItem item,
+    VaultAttachmentItem attachment,
+  ) async {
+    final service = _productivityService;
+    final handle = _selectedHandle;
+    if (service == null || handle == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('删除附件？'),
+        content: Text('“${attachment.name}”将从当前条目移除。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    await _guarded(() async {
+      await service.removeAttachment(handle, item.id, attachment.name);
+      await _refreshEntries();
+    });
+  }
+
+  Future<void> _showPasswordGenerator() async {
+    final service = _productivityService;
+    if (service == null) return;
+    final value = await showDialog<String>(
+      context: context,
+      builder: (_) => _PasswordGeneratorDialog(service: service),
+    );
+    if (value != null && mounted) await _copy(value);
   }
 
   Future<void> _createFolder([String? parentId]) async {
@@ -887,12 +1146,15 @@ class _VaultHomePageState extends State<VaultHomePage>
                     ? const SizedBox()
                     : _buildSearchField(),
                 actions: [
+                  _buildSyncStatus(),
                   IconButton(
-                    onPressed: _securityService == null || _selected == null
-                        ? null
-                        : _showSecuritySettings,
-                    tooltip: '安全设置',
-                    icon: const Icon(Icons.security_outlined, size: 20),
+                    onPressed: _productivityService != null
+                        ? _openSettings
+                        : (_securityService == null || _selected == null
+                              ? null
+                              : _showSecuritySettings),
+                    tooltip: '设置',
+                    icon: const Icon(Icons.settings_outlined, size: 20),
                   ),
                   IconButton(
                     onPressed: _handles.isEmpty ? null : _lockAll,
@@ -1092,12 +1354,44 @@ class _VaultHomePageState extends State<VaultHomePage>
         label: const Text('导入 OTP'),
       ),
       IconButton(
-        onPressed: _syncWebDav,
-        tooltip: 'WebDAV 同步',
-        icon: const Icon(Icons.sync),
+        onPressed: _productivityService == null ? null : _showPasswordGenerator,
+        tooltip: '密码生成器',
+        icon: const Icon(Icons.password_outlined),
       ),
     ],
   );
+
+  Widget _buildSyncStatus() {
+    final workspace = _selected;
+    if (workspace == null) return const SizedBox.shrink();
+    final state =
+        _syncStates[workspace.id] ??
+        (workspace.sync.configured
+            ? workspace.sync.passwordStored
+                  ? _WorkspaceSyncState.pending
+                  : _WorkspaceSyncState.credentialsNeeded
+            : _WorkspaceSyncState.unconfigured);
+    final (icon, label) = switch (state) {
+      _WorkspaceSyncState.unconfigured => (Icons.cloud_off_outlined, '同步未配置'),
+      _WorkspaceSyncState.credentialsNeeded => (
+        Icons.key_off_outlined,
+        '同步需要凭据',
+      ),
+      _WorkspaceSyncState.waitingNetwork => (
+        Icons.signal_wifi_connected_no_internet_4_outlined,
+        '等待可用网络',
+      ),
+      _WorkspaceSyncState.pending => (Icons.schedule_outlined, '同步待处理'),
+      _WorkspaceSyncState.syncing => (Icons.sync, '正在同步'),
+      _WorkspaceSyncState.synced => (Icons.cloud_done_outlined, '已同步'),
+      _WorkspaceSyncState.failed => (Icons.sync_problem_outlined, '同步失败，将自动重试'),
+    };
+    return IconButton(
+      onPressed: _productivityService == null ? null : _openSettings,
+      tooltip: label,
+      icon: Icon(icon, size: 20),
+    );
+  }
 
   List<VaultEntryItem> _visibleEntries() {
     final query = _query.trim().toLowerCase();
@@ -1128,7 +1422,22 @@ class _VaultHomePageState extends State<VaultHomePage>
               entry.username.toLowerCase().contains(query) ||
               entry.url.toLowerCase().contains(query) ||
               entry.tags.any((tag) => tag.toLowerCase().contains(query));
-          return typeMatches && folderMatches && textMatches;
+          final smartMatches = switch (_smartFilter) {
+            _SmartFilter.none => true,
+            _SmartFilter.favorites => entry.isFavorite,
+            _SmartFilter.recent =>
+              entry.modifiedAtUnixMs >
+                  DateTime.now()
+                      .subtract(const Duration(days: 30))
+                      .millisecondsSinceEpoch,
+          };
+          final tagMatches =
+              _selectedTag == null || entry.tags.contains(_selectedTag);
+          return typeMatches &&
+              folderMatches &&
+              textMatches &&
+              smartMatches &&
+              tagMatches;
         }).toList()..sort(
           (a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()),
         );
@@ -1186,8 +1495,50 @@ class _VaultHomePageState extends State<VaultHomePage>
             padding: EdgeInsets.fromLTRB(14, 10, 14, 4),
             child: Text('搜索与标签', style: TextStyle(fontSize: 12)),
           ),
-          _folderShortcut(Icons.list_alt_outlined, '所有条目', content.rootGroupId),
-          _folderShortcut(Icons.password_outlined, '含密码', content.rootGroupId),
+          _folderShortcut(Icons.list_alt_outlined, '所有条目', () {
+            _selectGroup(content.rootGroupId);
+          }),
+          _folderShortcut(Icons.star_outline, '收藏', () {
+            setState(() {
+              _selectedGroups[_selectedId!] = content.rootGroupId;
+              _smartFilter = _SmartFilter.favorites;
+              _selectedTag = null;
+            });
+          }),
+          _folderShortcut(Icons.history, '最近修改', () {
+            setState(() {
+              _selectedGroups[_selectedId!] = content.rootGroupId;
+              _smartFilter = _SmartFilter.recent;
+              _selectedTag = null;
+            });
+          }),
+          _folderShortcut(
+            Icons.health_and_safety_outlined,
+            '密码健康',
+            _openSettings,
+          ),
+          if (_selectedEntries
+              .expand((entry) => entry.tags)
+              .toSet()
+              .isNotEmpty) ...[
+            const Padding(
+              padding: EdgeInsets.fromLTRB(14, 10, 14, 4),
+              child: Text('标签', style: TextStyle(fontSize: 12)),
+            ),
+            for (final tag
+                in (_selectedEntries
+                    .expand((entry) => entry.tags)
+                    .toSet()
+                    .toList()
+                  ..sort()))
+              _folderShortcut(Icons.sell_outlined, tag, () {
+                setState(() {
+                  _selectedGroups[_selectedId!] = content.rootGroupId;
+                  _selectedTag = tag;
+                  _smartFilter = _SmartFilter.none;
+                });
+              }),
+          ],
           const SizedBox(height: 8),
         ],
       ),
@@ -1215,13 +1566,14 @@ class _VaultHomePageState extends State<VaultHomePage>
             child: Row(
               children: [
                 SizedBox(width: 8.0 + depth * 16),
-                Icon(
+                _vaultIcon(
+                  group.icon,
                   group.isRecycleBin
                       ? Icons.delete_outline
                       : group.isRoot
                       ? Icons.folder_special_outlined
                       : Icons.folder_outlined,
-                  size: 19,
+                  19,
                 ),
                 const SizedBox(width: 8),
                 Expanded(
@@ -1235,6 +1587,7 @@ class _VaultHomePageState extends State<VaultHomePage>
                       if (action == 'new') _createFolder(group.id);
                       if (action == 'rename') _renameFolder(group);
                       if (action == 'move') _moveFolderTo(group);
+                      if (action == 'icon') _chooseFolderIcon(group);
                       if (action == 'trash') _trashFolder(group);
                       if (action == 'restore') _restoreFolder(group);
                       if (action == 'delete') _deleteFolderPermanently(group);
@@ -1248,6 +1601,7 @@ class _VaultHomePageState extends State<VaultHomePage>
                             PopupMenuItem(value: 'new', child: Text('新建子文件夹')),
                             PopupMenuItem(value: 'rename', child: Text('重命名')),
                             PopupMenuItem(value: 'move', child: Text('移动到…')),
+                            PopupMenuItem(value: 'icon', child: Text('设置图标')),
                             PopupMenuItem(value: 'trash', child: Text('移至回收站')),
                           ],
                   ),
@@ -1266,13 +1620,13 @@ class _VaultHomePageState extends State<VaultHomePage>
     ];
   }
 
-  Widget _folderShortcut(IconData icon, String label, String groupId) =>
+  Widget _folderShortcut(IconData icon, String label, VoidCallback onTap) =>
       ListTile(
         dense: true,
         visualDensity: VisualDensity.compact,
         leading: Icon(icon, size: 18),
         title: Text(label),
-        onTap: () => _selectGroup(groupId),
+        onTap: onTap,
       );
 
   Widget _buildDesktopContent() => Column(
@@ -1448,10 +1802,26 @@ class _VaultHomePageState extends State<VaultHomePage>
         onTap: () => _selectEntry(item),
         child: Row(
           children: [
-            SizedBox(width: 42, child: Icon(_iconFor(item.type), size: 19)),
+            SizedBox(
+              width: 42,
+              child: Center(
+                child: _vaultIcon(item.icon, _iconFor(item.type), 19),
+              ),
+            ),
             Expanded(
               flex: 3,
-              child: Text(item.title, overflow: TextOverflow.ellipsis),
+              child: Row(
+                children: [
+                  if (item.isFavorite)
+                    const Padding(
+                      padding: EdgeInsets.only(right: 5),
+                      child: Icon(Icons.star, size: 15),
+                    ),
+                  Expanded(
+                    child: Text(item.title, overflow: TextOverflow.ellipsis),
+                  ),
+                ],
+              ),
             ),
             Expanded(
               flex: 3,
@@ -1517,7 +1887,9 @@ class _VaultHomePageState extends State<VaultHomePage>
         children: [
           Row(
             children: [
-              CircleAvatar(child: Icon(_iconFor(item.type))),
+              CircleAvatar(
+                child: _vaultIcon(item.icon, _iconFor(item.type), 22),
+              ),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
@@ -1533,6 +1905,13 @@ class _VaultHomePageState extends State<VaultHomePage>
                     ),
                   ],
                 ),
+              ),
+              IconButton(
+                tooltip: item.isFavorite ? '取消收藏' : '收藏',
+                onPressed: _productivityService == null
+                    ? null
+                    : () => _toggleFavorite(item),
+                icon: Icon(item.isFavorite ? Icons.star : Icons.star_border),
               ),
               IconButton(
                 onPressed: () => _editEntry(item),
@@ -1574,6 +1953,46 @@ class _VaultHomePageState extends State<VaultHomePage>
               children: item.tags.map((tag) => Chip(label: Text(tag))).toList(),
             ),
           ],
+          const SizedBox(height: 18),
+          Row(
+            children: [
+              Text('附件', style: Theme.of(context).textTheme.titleMedium),
+              const Spacer(),
+              TextButton.icon(
+                onPressed: _productivityService == null
+                    ? null
+                    : () => _addAttachment(item),
+                icon: const Icon(Icons.attach_file, size: 18),
+                label: const Text('添加附件'),
+              ),
+            ],
+          ),
+          if (item.attachments.isEmpty)
+            Text('暂无附件', style: Theme.of(context).textTheme.bodySmall)
+          else
+            for (final attachment in item.attachments)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.insert_drive_file_outlined),
+                title: Text(attachment.name),
+                subtitle: Text(_formatBytes(attachment.size)),
+                trailing: PopupMenuButton<String>(
+                  onSelected: (action) {
+                    if (action == 'export') {
+                      _exportAttachment(item, attachment);
+                    } else if (action == 'rename') {
+                      _renameAttachment(item, attachment);
+                    } else if (action == 'delete') {
+                      _removeAttachment(item, attachment);
+                    }
+                  },
+                  itemBuilder: (_) => const [
+                    PopupMenuItem(value: 'export', child: Text('导出')),
+                    PopupMenuItem(value: 'rename', child: Text('重命名')),
+                    PopupMenuItem(value: 'delete', child: Text('删除')),
+                  ],
+                ),
+              ),
         ],
       ),
     );
@@ -1606,6 +2025,46 @@ class _VaultHomePageState extends State<VaultHomePage>
     ),
   );
 
+  Widget _vaultIcon(VaultIconItem icon, IconData fallback, double size) {
+    if (icon.type == VaultIconType.builtIn && icon.builtInId != null) {
+      return Icon(_keepassIcon(icon.builtInId!), size: size);
+    }
+    final customId = icon.customId;
+    final handle = _selectedHandle;
+    final service = _productivityService;
+    if (icon.type == VaultIconType.custom &&
+        customId != null &&
+        handle != null &&
+        service != null) {
+      final key = '$handle:$customId';
+      final load = _customIconLoads.putIfAbsent(
+        key,
+        () => service.loadCustomIcon(handle, customId),
+      );
+      return FutureBuilder<Uint8List>(
+        future: load,
+        builder: (context, snapshot) {
+          final bytes = snapshot.data;
+          if (bytes == null) return Icon(fallback, size: size);
+          return Image.memory(
+            bytes,
+            width: size,
+            height: size,
+            fit: BoxFit.contain,
+            errorBuilder: (_, _, _) => Icon(fallback, size: size),
+          );
+        },
+      );
+    }
+    return Icon(fallback, size: size);
+  }
+
+  String _formatBytes(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KiB';
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MiB';
+  }
+
   Widget _buildMobileWorkspace() {
     final workspace = _selected;
     if (workspace == null) return const SizedBox();
@@ -1635,7 +2094,7 @@ class _VaultHomePageState extends State<VaultHomePage>
                     final item = visible[index];
                     final otp = _codes[item.id];
                     return ListTile(
-                      leading: Icon(_iconFor(item.type)),
+                      leading: _vaultIcon(item.icon, _iconFor(item.type), 24),
                       title: Text(item.title),
                       subtitle: Text(
                         item.username.isEmpty
@@ -1666,6 +2125,268 @@ class _VaultHomePageState extends State<VaultHomePage>
       ],
     );
   }
+}
+
+IconData _keepassIcon(int id) {
+  const icons = <IconData>[
+    Icons.key,
+    Icons.public,
+    Icons.warning_amber,
+    Icons.dns_outlined,
+    Icons.push_pin_outlined,
+    Icons.chat_bubble_outline,
+    Icons.grid_view,
+    Icons.edit_note,
+    Icons.lan_outlined,
+    Icons.badge_outlined,
+    Icons.description_outlined,
+    Icons.camera_alt_outlined,
+    Icons.wifi,
+    Icons.link,
+    Icons.battery_full,
+    Icons.scanner_outlined,
+    Icons.bookmark_outline,
+    Icons.album_outlined,
+    Icons.monitor_outlined,
+    Icons.email_outlined,
+    Icons.settings,
+    Icons.content_paste,
+    Icons.description,
+    Icons.bolt,
+  ];
+  return icons[id % icons.length];
+}
+
+class _FolderIconDialog extends StatelessWidget {
+  const _FolderIconDialog({required this.current});
+  final int? current;
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('设置文件夹图标'),
+    content: SizedBox(
+      width: 460,
+      child: GridView.count(
+        shrinkWrap: true,
+        crossAxisCount: 8,
+        mainAxisSpacing: 8,
+        crossAxisSpacing: 8,
+        children: [
+          InkWell(
+            onTap: () => Navigator.pop(context, -1),
+            borderRadius: BorderRadius.circular(8),
+            child: const Tooltip(
+              message: '默认文件夹图标',
+              child: Icon(Icons.folder_outlined),
+            ),
+          ),
+          for (var id = 0; id < 24; id++)
+            InkWell(
+              onTap: () => Navigator.pop(context, id),
+              borderRadius: BorderRadius.circular(8),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  border: current == id
+                      ? Border.all(
+                          color: Theme.of(context).colorScheme.primary,
+                          width: 2,
+                        )
+                      : null,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(_keepassIcon(id)),
+              ),
+            ),
+        ],
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context, -2),
+        child: const Text('取消'),
+      ),
+    ],
+  );
+}
+
+class _PasswordGeneratorDialog extends StatefulWidget {
+  const _PasswordGeneratorDialog({required this.service});
+  final ProductivityVaultService service;
+
+  @override
+  State<_PasswordGeneratorDialog> createState() =>
+      _PasswordGeneratorDialogState();
+}
+
+class _PasswordGeneratorDialogState extends State<_PasswordGeneratorDialog> {
+  bool passphrase = false;
+  double length = 20;
+  bool lowercase = true;
+  bool uppercase = true;
+  bool digits = true;
+  bool symbols = true;
+  bool excludeAmbiguous = true;
+  bool capitalize = false;
+  bool includeNumber = false;
+  GeneratedPassword? generated;
+  bool busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _generate();
+  }
+
+  Future<void> _generate() async {
+    setState(() => busy = true);
+    try {
+      generated = passphrase
+          ? await widget.service.generatePassphrase(
+              wordCount: length.round().clamp(4, 12),
+              capitalize: capitalize,
+              includeNumber: includeNumber,
+            )
+          : await widget.service.generateRandomPassword(
+              length: length.round(),
+              lowercase: lowercase,
+              uppercase: uppercase,
+              digits: digits,
+              symbols: symbols,
+              excludeAmbiguous: excludeAmbiguous,
+            );
+    } on Object {
+      generated = null;
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('密码生成器'),
+    content: SizedBox(
+      width: 520,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SegmentedButton<bool>(
+            segments: const [
+              ButtonSegment(value: false, label: Text('随机密码')),
+              ButtonSegment(value: true, label: Text('口令短语')),
+            ],
+            selected: {passphrase},
+            onSelectionChanged: (value) {
+              setState(() {
+                passphrase = value.first;
+                length = passphrase ? 6 : 20;
+              });
+              _generate();
+            },
+          ),
+          const SizedBox(height: 18),
+          SelectableText(
+            generated?.value ?? (busy ? '正在生成…' : '请选择有效选项'),
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          if (generated != null) Text('估算熵：${generated!.entropyBits} bits'),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Text(
+                passphrase ? '单词数 ${length.round()}' : '长度 ${length.round()}',
+              ),
+              Expanded(
+                child: Slider(
+                  min: passphrase ? 4 : 12,
+                  max: passphrase ? 12 : 128,
+                  divisions: passphrase ? 8 : 116,
+                  value: length,
+                  onChanged: (value) => setState(() => length = value),
+                  onChangeEnd: (_) => _generate(),
+                ),
+              ),
+            ],
+          ),
+          if (passphrase) ...[
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('单词首字母大写'),
+              value: capitalize,
+              onChanged: (value) {
+                setState(() => capitalize = value);
+                _generate();
+              },
+            ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('附加数字'),
+              value: includeNumber,
+              onChanged: (value) {
+                setState(() => includeNumber = value);
+                _generate();
+              },
+            ),
+          ] else ...[
+            Wrap(
+              spacing: 8,
+              children: [
+                FilterChip(
+                  label: const Text('a-z'),
+                  selected: lowercase,
+                  onSelected: (value) {
+                    setState(() => lowercase = value);
+                    _generate();
+                  },
+                ),
+                FilterChip(
+                  label: const Text('A-Z'),
+                  selected: uppercase,
+                  onSelected: (value) {
+                    setState(() => uppercase = value);
+                    _generate();
+                  },
+                ),
+                FilterChip(
+                  label: const Text('0-9'),
+                  selected: digits,
+                  onSelected: (value) {
+                    setState(() => digits = value);
+                    _generate();
+                  },
+                ),
+                FilterChip(
+                  label: const Text('符号'),
+                  selected: symbols,
+                  onSelected: (value) {
+                    setState(() => symbols = value);
+                    _generate();
+                  },
+                ),
+                FilterChip(
+                  label: const Text('排除易混淆字符'),
+                  selected: excludeAmbiguous,
+                  onSelected: (value) {
+                    setState(() => excludeAmbiguous = value);
+                    _generate();
+                  },
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    ),
+    actions: [
+      TextButton(onPressed: _generate, child: const Text('重新生成')),
+      FilledButton.icon(
+        onPressed: generated == null
+            ? null
+            : () => Navigator.pop(context, generated!.value),
+        icon: const Icon(Icons.copy_outlined),
+        label: const Text('复制并关闭'),
+      ),
+    ],
+  );
 }
 
 class _LockedWorkspace extends StatelessWidget {
@@ -2081,92 +2802,6 @@ class _OtpImportDialog extends StatefulWidget {
   const _OtpImportDialog();
   @override
   State<_OtpImportDialog> createState() => _OtpImportDialogState();
-}
-
-class _WebDavDialog extends StatefulWidget {
-  const _WebDavDialog();
-
-  @override
-  State<_WebDavDialog> createState() => _WebDavDialogState();
-}
-
-class _WebDavDialogState extends State<_WebDavDialog> {
-  final endpoint = TextEditingController();
-  final username = TextEditingController();
-  final password = TextEditingController();
-  bool allowInsecureHttp = false;
-
-  @override
-  void dispose() {
-    endpoint.dispose();
-    username.dispose();
-    password.clear();
-    password.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) => AlertDialog(
-    title: const Text('WebDAV 同步'),
-    content: SizedBox(
-      width: 520,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          TextField(
-            controller: endpoint,
-            autofocus: true,
-            decoration: const InputDecoration(
-              labelText: 'KDBX 远端完整 URL',
-              hintText: 'https://dav.example.com/vault.kdbx',
-            ),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: username,
-            decoration: const InputDecoration(labelText: '用户名'),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: password,
-            obscureText: true,
-            autocorrect: false,
-            enableSuggestions: false,
-            decoration: const InputDecoration(labelText: 'WebDAV 密码'),
-          ),
-          CheckboxListTile(
-            contentPadding: EdgeInsets.zero,
-            value: allowInsecureHttp,
-            onChanged: (value) =>
-                setState(() => allowInsecureHttp = value ?? false),
-            title: const Text('允许不安全的 HTTP（仅限可信局域网）'),
-          ),
-          const Text('凭据仅用于本次同步，不会写入 Workspace 元数据。'),
-        ],
-      ),
-    ),
-    actions: [
-      TextButton(
-        onPressed: () => Navigator.pop(context),
-        child: const Text('取消'),
-      ),
-      FilledButton(
-        onPressed: () {
-          if (endpoint.text.trim().isEmpty) return;
-          Navigator.pop(
-            context,
-            WebDavSettings(
-              endpoint: endpoint.text.trim(),
-              username: username.text,
-              password: password.text,
-              allowInsecureHttp: allowInsecureHttp,
-            ),
-          );
-        },
-        child: const Text('同步'),
-      ),
-    ],
-  );
 }
 
 class _OtpImportDialogState extends State<_OtpImportDialog> {
