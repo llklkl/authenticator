@@ -4,6 +4,7 @@ import 'package:authenticator_vault/src/features/settings/settings_page.dart';
 import 'package:authenticator_vault/src/features/security/platform_security_service.dart';
 import 'package:authenticator_vault/src/features/vault/desktop_title_bar.dart';
 import 'package:authenticator_vault/src/features/vault/vault_service.dart';
+import 'package:authenticator_vault/src/l10n.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -203,7 +204,7 @@ class _VaultHomePageState extends State<VaultHomePage>
       });
       await _securityCoordinator.setUnlockedCount(_handles.length);
       await _refreshEntries();
-    }, success: 'Workspace 已创建，本地文件使用 KDBX 4.1 加密。');
+    }, success: context.tr('Workspace 已创建，本地文件使用 KDBX 4.1 加密。'));
   }
 
   Future<void> _importWorkspace() async {
@@ -228,7 +229,7 @@ class _VaultHomePageState extends State<VaultHomePage>
       await _securityCoordinator.setUnlockedCount(_handles.length);
       await _refreshEntries();
       await _refreshOtp();
-    }, success: 'KDBX Workspace 已导入。');
+    }, success: context.tr('KDBX Workspace 已导入。'));
   }
 
   Future<void> _unlock() async {
@@ -334,7 +335,10 @@ class _VaultHomePageState extends State<VaultHomePage>
     final handle = _selectedHandle;
     if (handle == null) return;
     final draft = await _sensitiveDialog<VaultEntryDraft>(
-      builder: (_) => _EntryEditorDialog(initialType: initialType),
+      builder: (_) => _EntryEditorDialog(
+        initialType: initialType,
+        generatorService: _productivityService,
+      ),
     );
     if (draft == null || !mounted) return;
     await _guarded(() async {
@@ -346,7 +350,7 @@ class _VaultHomePageState extends State<VaultHomePage>
         await widget.vaultService.createEntry(handle, draft);
       }
       await _refreshEntries();
-    }, success: '条目已保存。');
+    }, success: context.tr('条目已保存。'));
   }
 
   Future<void> _importOtp() async {
@@ -359,7 +363,7 @@ class _VaultHomePageState extends State<VaultHomePage>
     await _guarded(() async {
       await widget.vaultService.importOtp(handle, uri);
       await _refreshEntries();
-    }, success: 'OTP 已写入加密 Vault。');
+    }, success: context.tr('OTP 已写入加密 Vault。'));
   }
 
   Future<void> _openSettings() async {
@@ -488,6 +492,7 @@ class _VaultHomePageState extends State<VaultHomePage>
     final draft = await _sensitiveDialog<VaultEntryDraft>(
       builder: (_) => _EntryEditorDialog(
         initialType: item.type,
+        generatorService: _productivityService,
         initial: VaultEntryDraft(
           type: item.type,
           title: item.title,
@@ -1161,12 +1166,12 @@ class _VaultHomePageState extends State<VaultHomePage>
                         : (_securityService == null || _selected == null
                               ? null
                               : _showSecuritySettings),
-                    tooltip: '设置',
+                    tooltip: context.tr('设置'),
                     icon: const Icon(Icons.settings_outlined, size: 20),
                   ),
                   IconButton(
                     onPressed: _handles.isEmpty ? null : _lockAll,
-                    tooltip: '锁定全部 Workspace',
+                    tooltip: context.tr('锁定全部 Workspace'),
                     icon: const Icon(Icons.lock_outline, size: 20),
                   ),
                 ],
@@ -1207,11 +1212,11 @@ class _VaultHomePageState extends State<VaultHomePage>
             const Icon(Icons.shield_outlined, size: 72),
             const SizedBox(height: 20),
             Text(
-              '创建你的第一个 Workspace',
+              context.tr('创建你的第一个 Workspace'),
               style: Theme.of(context).textTheme.headlineSmall,
             ),
             const SizedBox(height: 8),
-            const Text('每个 Workspace 是独立的 KDBX 4.1 文件，可使用不同主密码。'),
+            Text(context.tr('每个 Workspace 是独立的 KDBX 4.1 文件，可使用不同主密码。')),
             const SizedBox(height: 24),
             Wrap(
               spacing: 12,
@@ -1221,12 +1226,12 @@ class _VaultHomePageState extends State<VaultHomePage>
                 FilledButton.icon(
                   onPressed: _createWorkspace,
                   icon: const Icon(Icons.add),
-                  label: const Text('新建 Workspace'),
+                  label: Text(context.tr('新建 Workspace')),
                 ),
                 OutlinedButton.icon(
                   onPressed: _importWorkspace,
                   icon: const Icon(Icons.file_open_outlined),
-                  label: const Text('导入现有 KDBX'),
+                  label: Text(context.tr('导入现有 KDBX')),
                 ),
               ],
             ),
@@ -1237,7 +1242,7 @@ class _VaultHomePageState extends State<VaultHomePage>
   );
 
   Widget _buildWorkspaceSwitcher() => PopupMenuButton<String>(
-    tooltip: '切换 Workspace',
+    tooltip: context.tr('切换 Workspace'),
     onSelected: (value) {
       if (value == '__create') {
         _createWorkspace();
@@ -1269,8 +1274,11 @@ class _VaultHomePageState extends State<VaultHomePage>
           ),
         ),
       const PopupMenuDivider(),
-      const PopupMenuItem(value: '__create', child: Text('＋ 新建 Workspace')),
-      const PopupMenuItem(value: '__import', child: Text('导入 KDBX…')),
+      PopupMenuItem(
+        value: '__create',
+        child: Text(context.tr('＋ 新建 Workspace')),
+      ),
+      PopupMenuItem(value: '__import', child: Text(context.tr('导入 KDBX…'))),
     ],
     child: ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 230),
@@ -1329,11 +1337,11 @@ class _VaultHomePageState extends State<VaultHomePage>
     child: TextField(
       controller: _searchController,
       onChanged: (value) => setState(() => _query = value),
-      decoration: const InputDecoration(
-        hintText: '搜索当前 Workspace',
-        prefixIcon: Icon(Icons.search, size: 19),
-        contentPadding: EdgeInsets.symmetric(horizontal: 10),
-        border: OutlineInputBorder(borderSide: BorderSide.none),
+      decoration: InputDecoration(
+        hintText: context.tr('搜索当前 Workspace'),
+        prefixIcon: const Icon(Icons.search, size: 19),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 10),
+        border: const OutlineInputBorder(borderSide: BorderSide.none),
         filled: true,
       ),
     ),
@@ -1343,27 +1351,38 @@ class _VaultHomePageState extends State<VaultHomePage>
     mainAxisSize: MainAxisSize.min,
     children: [
       PopupMenuButton<EntryType>(
-        tooltip: '新增条目',
+        tooltip: context.tr('新增条目'),
         onSelected: _addEntry,
-        itemBuilder: (_) => const [
-          PopupMenuItem(value: EntryType.login, child: Text('登录密码')),
-          PopupMenuItem(value: EntryType.otp, child: Text('OTP')),
-          PopupMenuItem(value: EntryType.recoveryCodes, child: Text('恢复码')),
-          PopupMenuItem(value: EntryType.secureNote, child: Text('安全笔记')),
+        itemBuilder: (_) => [
+          PopupMenuItem(
+            value: EntryType.login,
+            child: Text(context.tr('登录密码')),
+          ),
+          const PopupMenuItem(value: EntryType.otp, child: Text('OTP')),
+          PopupMenuItem(
+            value: EntryType.recoveryCodes,
+            child: Text(context.tr('恢复码')),
+          ),
+          PopupMenuItem(
+            value: EntryType.secureNote,
+            child: Text(context.tr('安全笔记')),
+          ),
         ],
-        child: const Padding(
-          padding: EdgeInsets.symmetric(horizontal: 8),
-          child: Row(children: [Icon(Icons.add, size: 19), Text('新增')]),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          child: Row(
+            children: [const Icon(Icons.add, size: 19), Text(context.tr('新增'))],
+          ),
         ),
       ),
       TextButton.icon(
         onPressed: _importOtp,
         icon: const Icon(Icons.qr_code_2, size: 19),
-        label: const Text('导入 OTP'),
+        label: Text(context.tr('导入 OTP')),
       ),
       IconButton(
         onPressed: _productivityService == null ? null : _showPasswordGenerator,
-        tooltip: '密码生成器',
+        tooltip: context.tr('密码生成器'),
         icon: const Icon(Icons.password_outlined),
       ),
     ],
@@ -1396,7 +1415,7 @@ class _VaultHomePageState extends State<VaultHomePage>
     };
     return IconButton(
       onPressed: _productivityService == null ? null : _openSettings,
-      tooltip: label,
+      tooltip: context.tr(label),
       icon: Icon(icon, size: 20),
     );
   }
@@ -1642,39 +1661,101 @@ class _VaultHomePageState extends State<VaultHomePage>
       _buildSectionBar(),
       const Divider(height: 1),
       Expanded(
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final listHeight = (constraints.maxHeight * _listFraction).clamp(
-              180.0,
-              constraints.maxHeight - 150,
-            );
-            return Column(
-              children: [
-                SizedBox(height: listHeight, child: _buildEntryTable()),
-                MouseRegion(
-                  cursor: SystemMouseCursors.resizeRow,
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onVerticalDragUpdate: (details) => setState(() {
-                      _listFraction =
-                          (_listFraction +
-                                  details.delta.dy / constraints.maxHeight)
-                              .clamp(.3, .78);
-                    }),
-                    child: const SizedBox(
-                      height: 7,
-                      child: Divider(height: 1, thickness: 1),
-                    ),
-                  ),
-                ),
-                Expanded(child: _buildDetailPane()),
-              ],
-            );
-          },
-        ),
+        child: _section == _VaultSection.otp
+            ? _buildOtpList()
+            : LayoutBuilder(
+                builder: (context, constraints) {
+                  final listHeight = (constraints.maxHeight * _listFraction)
+                      .clamp(180.0, constraints.maxHeight - 150);
+                  return Column(
+                    children: [
+                      SizedBox(height: listHeight, child: _buildEntryTable()),
+                      MouseRegion(
+                        cursor: SystemMouseCursors.resizeRow,
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onVerticalDragUpdate: (details) => setState(() {
+                            _listFraction =
+                                (_listFraction +
+                                        details.delta.dy /
+                                            constraints.maxHeight)
+                                    .clamp(.3, .78);
+                          }),
+                          child: const SizedBox(
+                            height: 7,
+                            child: Divider(height: 1, thickness: 1),
+                          ),
+                        ),
+                      ),
+                      Expanded(child: _buildDetailPane()),
+                    ],
+                  );
+                },
+              ),
       ),
     ],
   );
+
+  Widget _buildOtpList({bool mobile = false}) {
+    final entries = _visibleEntries().where((entry) => entry.hasOtp).toList();
+    if (entries.isEmpty) {
+      return Center(
+        child: Text(
+          context.tr(
+            _query.trim().isEmpty ? '这个 Workspace 还没有 OTP' : '没有匹配的 OTP',
+          ),
+        ),
+      );
+    }
+    return ListView.separated(
+      padding: EdgeInsets.symmetric(
+        horizontal: mobile ? 12 : 20,
+        vertical: mobile ? 8 : 14,
+      ),
+      itemCount: entries.length,
+      separatorBuilder: (_, _) => const Divider(height: 1),
+      itemBuilder: (context, index) {
+        final entry = entries[index];
+        final otp = _codes[entry.id];
+        return ListTile(
+          minTileHeight: mobile ? 72 : 66,
+          leading: _vaultIcon(entry.icon, Icons.timer_outlined, 24),
+          title: Text(entry.title, overflow: TextOverflow.ellipsis),
+          subtitle: entry.username.isEmpty
+              ? null
+              : Text(entry.username, overflow: TextOverflow.ellipsis),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                otp == null ? '••• •••' : _formatOtpCode(otp.code),
+                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                  letterSpacing: 2.2,
+                ),
+              ),
+              if (otp?.periodSeconds case final period?) ...[
+                const SizedBox(width: 14),
+                _OtpCountdownIndicator(
+                  periodSeconds: period,
+                  semanticLabel: context.tr('验证码有效期'),
+                ),
+              ],
+              const SizedBox(width: 4),
+              _entryMenu(entry),
+            ],
+          ),
+          onTap: otp == null ? null : () => _copy(otp.code),
+        );
+      },
+    );
+  }
+
+  String _formatOtpCode(String code) {
+    if (code.length == 6) return '${code.substring(0, 3)} ${code.substring(3)}';
+    if (code.length == 8) return '${code.substring(0, 4)} ${code.substring(4)}';
+    return code;
+  }
 
   void _setSection(_VaultSection section) {
     _hidePassword();
@@ -1691,11 +1772,13 @@ class _VaultHomePageState extends State<VaultHomePage>
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 2),
           child: ChoiceChip(
-            label: Text(switch (section) {
-              _VaultSection.passwords => '密码',
-              _VaultSection.otp => 'OTP',
-              _VaultSection.other => '其他',
-            }),
+            label: Text(
+              context.tr(switch (section) {
+                _VaultSection.passwords => '密码',
+                _VaultSection.otp => 'OTP',
+                _VaultSection.other => '其他',
+              }),
+            ),
             selected: _section == section,
             onSelected: (_) => _setSection(section),
             showCheckmark: false,
@@ -1715,7 +1798,7 @@ class _VaultHomePageState extends State<VaultHomePage>
                 child: Row(
                   children: [
                     IconButton(
-                      tooltip: '选择文件夹',
+                      tooltip: context.tr('选择文件夹'),
                       onPressed: _showMobileFolders,
                       icon: const Icon(Icons.folder_open_outlined, size: 20),
                     ),
@@ -1747,7 +1830,7 @@ class _VaultHomePageState extends State<VaultHomePage>
       builder: (context) => SafeArea(
         child: ListView(
           children: [
-            const ListTile(title: Text('选择文件夹')),
+            ListTile(title: Text(context.tr('选择文件夹'))),
             for (final group in content.groups)
               ListTile(
                 leading: Icon(
@@ -1770,7 +1853,9 @@ class _VaultHomePageState extends State<VaultHomePage>
     final visible = _visibleEntries();
     if (visible.isEmpty) {
       return Center(
-        child: Text(_query.trim().isEmpty ? '这个 Workspace 还是空的' : '没有匹配的条目'),
+        child: Text(
+          context.tr(_query.trim().isEmpty ? '这个 Workspace 还是空的' : '没有匹配的条目'),
+        ),
       );
     }
     return Column(
@@ -1887,7 +1972,6 @@ class _VaultHomePageState extends State<VaultHomePage>
     if (item == null) {
       return const Center(child: Text('选择一个条目查看详情'));
     }
-    final otp = _codes[item.id];
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(20, 14, 20, 24),
       child: Column(
@@ -1951,7 +2035,6 @@ class _VaultHomePageState extends State<VaultHomePage>
                   ),
                   copy: _revealedPassword != null,
                 ),
-              if (otp != null) _detailField('动态验证码', otp.code, copy: true),
             ],
           ),
           if (item.tags.isNotEmpty) ...[
@@ -2092,7 +2175,9 @@ class _VaultHomePageState extends State<VaultHomePage>
           child: _buildSearchField(),
         ),
         Expanded(
-          child: visible.isEmpty
+          child: _section == _VaultSection.otp
+              ? _buildOtpList(mobile: true)
+              : visible.isEmpty
               ? const Center(child: Text('这个 Workspace 还是空的'))
               : ListView.separated(
                   padding: const EdgeInsets.all(12),
@@ -2133,6 +2218,110 @@ class _VaultHomePageState extends State<VaultHomePage>
       ],
     );
   }
+}
+
+class _OtpCountdownIndicator extends StatefulWidget {
+  const _OtpCountdownIndicator({
+    required this.periodSeconds,
+    required this.semanticLabel,
+  });
+
+  final int periodSeconds;
+  final String semanticLabel;
+
+  @override
+  State<_OtpCountdownIndicator> createState() => _OtpCountdownIndicatorState();
+}
+
+class _OtpCountdownIndicatorState extends State<_OtpCountdownIndicator>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(vsync: this);
+
+  @override
+  void initState() {
+    super.initState();
+    _synchronize();
+  }
+
+  @override
+  void didUpdateWidget(_OtpCountdownIndicator oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.periodSeconds != widget.periodSeconds) _synchronize();
+  }
+
+  void _synchronize() {
+    final period = widget.periodSeconds.clamp(1, 86400);
+    final periodMs = period * 1000;
+    final elapsed = DateTime.now().millisecondsSinceEpoch % periodMs;
+    _controller
+      ..duration = Duration(milliseconds: periodMs)
+      ..value = elapsed / periodMs
+      ..repeat();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    label: widget.semanticLabel,
+    child: AnimatedBuilder(
+      animation: _controller,
+      builder: (context, _) {
+        final remaining = (1 - _controller.value) * widget.periodSeconds;
+        final color = remaining <= 5
+            ? Theme.of(context).colorScheme.error
+            : Theme.of(context).colorScheme.primary;
+        return CustomPaint(
+          size: const Size.square(25),
+          painter: _OtpCountdownPainter(
+            progress: 1 - _controller.value,
+            color: color,
+            trackColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+          ),
+        );
+      },
+    ),
+  );
+}
+
+class _OtpCountdownPainter extends CustomPainter {
+  const _OtpCountdownPainter({
+    required this.progress,
+    required this.color,
+    required this.trackColor,
+  });
+
+  final double progress;
+  final Color color;
+  final Color trackColor;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = size.center(Offset.zero);
+    final radius = (size.shortestSide - 3) / 2;
+    final rect = Rect.fromCircle(center: center, radius: radius);
+    final track = Paint()
+      ..color = trackColor
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3;
+    final active = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeWidth = 3;
+    canvas.drawCircle(center, radius, track);
+    canvas.drawArc(rect, -1.5708, 6.2832 * progress, false, active);
+  }
+
+  @override
+  bool shouldRepaint(_OtpCountdownPainter oldDelegate) =>
+      oldDelegate.progress != progress ||
+      oldDelegate.color != color ||
+      oldDelegate.trackColor != trackColor;
 }
 
 IconData _keepassIcon(int id) {
@@ -2326,8 +2515,12 @@ class _FolderIconDialog extends StatelessWidget {
 }
 
 class _PasswordGeneratorDialog extends StatefulWidget {
-  const _PasswordGeneratorDialog({required this.service});
+  const _PasswordGeneratorDialog({
+    required this.service,
+    this.useForEntry = false,
+  });
   final ProductivityVaultService service;
+  final bool useForEntry;
 
   @override
   State<_PasswordGeneratorDialog> createState() =>
@@ -2346,6 +2539,10 @@ class _PasswordGeneratorDialogState extends State<_PasswordGeneratorDialog> {
   bool includeNumber = false;
   GeneratedPassword? generated;
   bool busy = false;
+  String? error;
+  late final TextEditingController symbolCharacters = TextEditingController(
+    text: widget.service.preferences.value.passwordSymbols,
+  );
 
   @override
   void initState() {
@@ -2353,9 +2550,18 @@ class _PasswordGeneratorDialogState extends State<_PasswordGeneratorDialog> {
     _generate();
   }
 
+  @override
+  void dispose() {
+    symbolCharacters.clear();
+    symbolCharacters.dispose();
+    super.dispose();
+  }
+
   Future<void> _generate() async {
+    final invalidSymbols = context.tr('特殊字符集合无效');
     setState(() => busy = true);
     try {
+      error = null;
       generated = passphrase
           ? await widget.service.generatePassphrase(
               wordCount: length.round().clamp(4, 12),
@@ -2368,27 +2574,50 @@ class _PasswordGeneratorDialogState extends State<_PasswordGeneratorDialog> {
               uppercase: uppercase,
               digits: digits,
               symbols: symbols,
+              symbolCharacters: symbolCharacters.text,
               excludeAmbiguous: excludeAmbiguous,
             );
     } on Object {
       generated = null;
+      error = invalidSymbols;
     } finally {
       if (mounted) setState(() => busy = false);
     }
   }
 
+  Future<void> _accept() async {
+    final value = generated;
+    if (value == null || busy) return;
+    setState(() => busy = true);
+    try {
+      if (!passphrase && symbols) {
+        symbolCharacters.text = await widget.service.setPasswordSymbols(
+          symbolCharacters.text,
+        );
+      }
+      if (mounted) Navigator.pop(context, value.value);
+    } on Object {
+      if (mounted) {
+        setState(() {
+          busy = false;
+          error = context.tr('特殊字符集合无效');
+        });
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) => AlertDialog(
-    title: const Text('密码生成器'),
+    title: Text(context.tr('密码生成器')),
     content: SizedBox(
       width: 520,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           SegmentedButton<bool>(
-            segments: const [
-              ButtonSegment(value: false, label: Text('随机密码')),
-              ButtonSegment(value: true, label: Text('口令短语')),
+            segments: [
+              ButtonSegment(value: false, label: Text(context.tr('随机密码'))),
+              ButtonSegment(value: true, label: Text(context.tr('口令短语'))),
             ],
             selected: {passphrase},
             onSelectionChanged: (value) {
@@ -2401,15 +2630,28 @@ class _PasswordGeneratorDialogState extends State<_PasswordGeneratorDialog> {
           ),
           const SizedBox(height: 18),
           SelectableText(
-            generated?.value ?? (busy ? '正在生成…' : '请选择有效选项'),
+            generated?.value ??
+                (busy ? context.tr('正在生成…') : context.tr('请选择有效选项')),
             style: Theme.of(context).textTheme.titleMedium,
           ),
-          if (generated != null) Text('估算熵：${generated!.entropyBits} bits'),
+          if (generated != null)
+            Text(
+              context.tr('估算熵：{bits} bits', {
+                'bits': generated!.entropyBits.toString(),
+              }),
+            ),
+          if (error != null)
+            Text(
+              error!,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
           const SizedBox(height: 12),
           Row(
             children: [
               Text(
-                passphrase ? '单词数 ${length.round()}' : '长度 ${length.round()}',
+                context.tr(passphrase ? '单词数 {count}' : '长度 {count}', {
+                  'count': length.round().toString(),
+                }),
               ),
               Expanded(
                 child: Slider(
@@ -2426,7 +2668,7 @@ class _PasswordGeneratorDialogState extends State<_PasswordGeneratorDialog> {
           if (passphrase) ...[
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
-              title: const Text('单词首字母大写'),
+              title: Text(context.tr('单词首字母大写')),
               value: capitalize,
               onChanged: (value) {
                 setState(() => capitalize = value);
@@ -2435,7 +2677,7 @@ class _PasswordGeneratorDialogState extends State<_PasswordGeneratorDialog> {
             ),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
-              title: const Text('附加数字'),
+              title: Text(context.tr('附加数字')),
               value: includeNumber,
               onChanged: (value) {
                 setState(() => includeNumber = value);
@@ -2471,7 +2713,7 @@ class _PasswordGeneratorDialogState extends State<_PasswordGeneratorDialog> {
                   },
                 ),
                 FilterChip(
-                  label: const Text('符号'),
+                  label: Text(context.tr('符号')),
                   selected: symbols,
                   onSelected: (value) {
                     setState(() => symbols = value);
@@ -2479,7 +2721,7 @@ class _PasswordGeneratorDialogState extends State<_PasswordGeneratorDialog> {
                   },
                 ),
                 FilterChip(
-                  label: const Text('排除易混淆字符'),
+                  label: Text(context.tr('排除易混淆字符')),
                   selected: excludeAmbiguous,
                   onSelected: (value) {
                     setState(() => excludeAmbiguous = value);
@@ -2488,18 +2730,37 @@ class _PasswordGeneratorDialogState extends State<_PasswordGeneratorDialog> {
                 ),
               ],
             ),
+            if (symbols) ...[
+              const SizedBox(height: 12),
+              TextField(
+                controller: symbolCharacters,
+                autocorrect: false,
+                enableSuggestions: false,
+                decoration: InputDecoration(
+                  labelText: context.tr('特殊字符'),
+                  helperText: context.tr('仅允许 ASCII 标点；使用结果时保存为全局默认'),
+                  errorText: error,
+                ),
+                onSubmitted: (_) => _generate(),
+              ),
+            ],
           ],
         ],
       ),
     ),
     actions: [
-      TextButton(onPressed: _generate, child: const Text('重新生成')),
+      TextButton(
+        onPressed: busy ? null : () => Navigator.pop(context),
+        child: Text(context.tr('取消')),
+      ),
+      TextButton(
+        onPressed: busy ? null : _generate,
+        child: Text(context.tr('重新生成')),
+      ),
       FilledButton.icon(
-        onPressed: generated == null
-            ? null
-            : () => Navigator.pop(context, generated!.value),
-        icon: const Icon(Icons.copy_outlined),
-        label: const Text('复制并关闭'),
+        onPressed: generated == null || busy ? null : _accept,
+        icon: Icon(widget.useForEntry ? Icons.check : Icons.copy_outlined),
+        label: Text(context.tr(widget.useForEntry ? '使用此密码' : '复制并关闭')),
       ),
     ],
   );
@@ -2956,8 +3217,13 @@ class _OtpImportDialogState extends State<_OtpImportDialog> {
 }
 
 class _EntryEditorDialog extends StatefulWidget {
-  const _EntryEditorDialog({required this.initialType, this.initial});
+  const _EntryEditorDialog({
+    required this.initialType,
+    required this.generatorService,
+    this.initial,
+  });
   final EntryType initialType;
+  final ProductivityVaultService? generatorService;
   final VaultEntryDraft? initial;
   @override
   State<_EntryEditorDialog> createState() => _EntryEditorDialogState();
@@ -2974,6 +3240,17 @@ class _EntryEditorDialogState extends State<_EntryEditorDialog> {
     text: widget.initial?.tags.join(', '),
   );
   final otpUri = TextEditingController();
+
+  Future<void> _generatePassword() async {
+    final service = widget.generatorService;
+    if (service == null) return;
+    final value = await showDialog<String>(
+      context: context,
+      builder: (_) =>
+          _PasswordGeneratorDialog(service: service, useForEntry: true),
+    );
+    if (value != null && mounted) password.text = value;
+  }
 
   @override
   void dispose() {
@@ -2996,7 +3273,7 @@ class _EntryEditorDialogState extends State<_EntryEditorDialog> {
     final isOtp = type == EntryType.otp;
     final isEditingOtp = widget.initial?.preserveExistingOtp ?? false;
     return AlertDialog(
-      title: Text(widget.initial == null ? '新增条目' : '编辑条目'),
+      title: Text(context.tr(widget.initial == null ? '新增条目' : '编辑条目')),
       content: SizedBox(
         width: 560,
         child: SingleChildScrollView(
@@ -3005,12 +3282,12 @@ class _EntryEditorDialogState extends State<_EntryEditorDialog> {
             children: [
               DropdownButtonFormField<EntryType>(
                 initialValue: type,
-                decoration: const InputDecoration(labelText: '类型'),
+                decoration: InputDecoration(labelText: context.tr('类型')),
                 items: [
                   for (final value in EntryType.values)
                     DropdownMenuItem(
                       value: value,
-                      child: Text(_labelFor(value)),
+                      child: Text(context.tr(_labelFor(value))),
                     ),
                 ],
                 onChanged: (value) => setState(() => type = value!),
@@ -3019,13 +3296,13 @@ class _EntryEditorDialogState extends State<_EntryEditorDialog> {
               TextField(
                 controller: title,
                 autofocus: true,
-                decoration: const InputDecoration(labelText: '标题'),
+                decoration: InputDecoration(labelText: context.tr('标题')),
               ),
               if (isLogin || isOtp) ...[
                 const SizedBox(height: 12),
                 TextField(
                   controller: username,
-                  decoration: const InputDecoration(labelText: '账号'),
+                  decoration: InputDecoration(labelText: context.tr('账号')),
                 ),
               ],
               if (isLogin) ...[
@@ -3035,12 +3312,21 @@ class _EntryEditorDialogState extends State<_EntryEditorDialog> {
                   obscureText: true,
                   autocorrect: false,
                   enableSuggestions: false,
-                  decoration: const InputDecoration(labelText: '密码'),
+                  decoration: InputDecoration(
+                    labelText: context.tr('密码'),
+                    suffixIcon: IconButton(
+                      tooltip: context.tr('打开密码生成器'),
+                      onPressed: widget.generatorService == null
+                          ? null
+                          : _generatePassword,
+                      icon: const Icon(Icons.password_outlined),
+                    ),
+                  ),
                 ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: url,
-                  decoration: const InputDecoration(labelText: '网址'),
+                  decoration: InputDecoration(labelText: context.tr('网址')),
                 ),
               ],
               if (isOtp && !isEditingOtp) ...[
@@ -3058,15 +3344,17 @@ class _EntryEditorDialogState extends State<_EntryEditorDialog> {
                 minLines: 3,
                 maxLines: 8,
                 decoration: InputDecoration(
-                  labelText: type == EntryType.recoveryCodes
-                      ? '恢复码（每行一个）'
-                      : '受保护内容 / 笔记',
+                  labelText: context.tr(
+                    type == EntryType.recoveryCodes
+                        ? '恢复码（每行一个）'
+                        : '受保护内容 / 笔记',
+                  ),
                 ),
               ),
               const SizedBox(height: 12),
               TextField(
                 controller: tags,
-                decoration: const InputDecoration(labelText: '标签（逗号分隔）'),
+                decoration: InputDecoration(labelText: context.tr('标签（逗号分隔）')),
               ),
             ],
           ),
@@ -3075,7 +3363,7 @@ class _EntryEditorDialogState extends State<_EntryEditorDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: const Text('取消'),
+          child: Text(context.tr('取消')),
         ),
         FilledButton(
           onPressed: () {
@@ -3099,7 +3387,7 @@ class _EntryEditorDialogState extends State<_EntryEditorDialog> {
               ),
             );
           },
-          child: const Text('保存'),
+          child: Text(context.tr('保存')),
         ),
       ],
     );

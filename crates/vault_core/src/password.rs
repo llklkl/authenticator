@@ -8,7 +8,7 @@ use crate::{Result, VaultError};
 const LOWER: &[u8] = b"abcdefghijklmnopqrstuvwxyz";
 const UPPER: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const DIGITS: &[u8] = b"0123456789";
-const SYMBOLS: &[u8] = b"!@#$%^&*()-_=+[]{};:,.?";
+pub const DEFAULT_PASSWORD_SYMBOLS: &str = "!@#$%^&*()-_=+[]{};:,.?";
 const AMBIGUOUS: &[u8] = b"Il1O0o|`'\"";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -19,6 +19,7 @@ pub enum PasswordGeneratorRequest {
         uppercase: bool,
         digits: bool,
         symbols: bool,
+        symbol_characters: String,
         exclude_ambiguous: bool,
     },
     Passphrase {
@@ -53,10 +54,12 @@ pub fn generate_password(request: &PasswordGeneratorRequest) -> Result<Generated
             uppercase,
             digits,
             symbols,
+            symbol_characters,
             exclude_ambiguous,
         } => generate_random(
             *length,
             [*lowercase, *uppercase, *digits, *symbols],
+            symbol_characters,
             *exclude_ambiguous,
         ),
         PasswordGeneratorRequest::Passphrase {
@@ -71,12 +74,18 @@ pub fn generate_password(request: &PasswordGeneratorRequest) -> Result<Generated
 fn generate_random(
     length: usize,
     enabled: [bool; 4],
+    symbol_characters: &str,
     exclude_ambiguous: bool,
 ) -> Result<GeneratedPassword> {
     if !(12..=128).contains(&length) || !enabled.iter().any(|value| *value) {
         return Err(VaultError::InvalidGeneratorRequest);
     }
-    let source_sets = [LOWER, UPPER, DIGITS, SYMBOLS];
+    let symbols = if enabled[3] {
+        normalize_symbol_characters(symbol_characters)?
+    } else {
+        String::new()
+    };
+    let source_sets = [LOWER, UPPER, DIGITS, symbols.as_bytes()];
     let sets: Vec<Vec<u8>> = source_sets
         .into_iter()
         .zip(enabled)
@@ -109,6 +118,22 @@ fn generate_random(
         value: Zeroizing::new(value),
         entropy_bits,
     })
+}
+
+pub fn normalize_symbol_characters(value: &str) -> Result<String> {
+    let mut seen = [false; 128];
+    let mut normalized = String::new();
+    for value in value.bytes() {
+        if !value.is_ascii_punctuation() {
+            return Err(VaultError::InvalidGeneratorRequest);
+        }
+        let index = usize::from(value);
+        if !seen[index] {
+            seen[index] = true;
+            normalized.push(char::from(value));
+        }
+    }
+    Ok(normalized)
 }
 
 fn generate_passphrase(
@@ -172,6 +197,7 @@ mod tests {
             uppercase: true,
             digits: true,
             symbols: true,
+            symbol_characters: DEFAULT_PASSWORD_SYMBOLS.into(),
             exclude_ambiguous: true,
         })
         .unwrap();
@@ -183,7 +209,7 @@ mod tests {
             generated
                 .value
                 .bytes()
-                .any(|value| SYMBOLS.contains(&value))
+                .any(|value| DEFAULT_PASSWORD_SYMBOLS.as_bytes().contains(&value))
         );
         assert!(
             !generated
@@ -216,6 +242,45 @@ mod tests {
                 uppercase: false,
                 digits: false,
                 symbols: false,
+                symbol_characters: DEFAULT_PASSWORD_SYMBOLS.into(),
+                exclude_ambiguous: false,
+            }),
+            Err(VaultError::InvalidGeneratorRequest)
+        );
+    }
+
+    #[test]
+    fn custom_symbols_are_normalized_and_used_exclusively() {
+        assert_eq!(normalize_symbol_characters("!@!!#").unwrap(), "!@#");
+        let generated = generate_password(&PasswordGeneratorRequest::Random {
+            length: 32,
+            lowercase: false,
+            uppercase: false,
+            digits: false,
+            symbols: true,
+            symbol_characters: "!@#".into(),
+            exclude_ambiguous: false,
+        })
+        .unwrap();
+        assert!(generated.value.bytes().all(|value| b"!@#".contains(&value)));
+    }
+
+    #[test]
+    fn custom_symbols_reject_invalid_input_and_empty_enabled_set() {
+        for invalid in ["abc", "! ", "。"] {
+            assert_eq!(
+                normalize_symbol_characters(invalid),
+                Err(VaultError::InvalidGeneratorRequest)
+            );
+        }
+        assert_eq!(
+            generate_password(&PasswordGeneratorRequest::Random {
+                length: 20,
+                lowercase: true,
+                uppercase: true,
+                digits: true,
+                symbols: true,
+                symbol_characters: String::new(),
                 exclude_ambiguous: false,
             }),
             Err(VaultError::InvalidGeneratorRequest)

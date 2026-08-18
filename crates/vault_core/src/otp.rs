@@ -51,6 +51,7 @@ impl fmt::Debug for OtpConfig {
 pub struct OtpCode {
     pub value: String,
     pub valid_for_seconds: Option<u64>,
+    pub period_seconds: Option<u64>,
 }
 
 impl OtpConfig {
@@ -169,13 +170,18 @@ impl OtpConfig {
 
     pub fn code_at(&self, unix_seconds: i64) -> Result<OtpCode> {
         let seconds = u64::try_from(unix_seconds).map_err(|_| VaultError::InvalidTimestamp)?;
-        let (counter, valid_for_seconds) = match self.kind {
-            OtpKind::Totp { period } => (seconds / period, Some(period - seconds % period)),
-            OtpKind::Hotp { counter } => (counter, None),
+        let (counter, valid_for_seconds, period_seconds) = match self.kind {
+            OtpKind::Totp { period } => (
+                seconds / period,
+                Some(period - seconds % period),
+                Some(period),
+            ),
+            OtpKind::Hotp { counter } => (counter, None, None),
         };
         Ok(OtpCode {
             value: self.generate(counter)?,
             valid_for_seconds,
+            period_seconds,
         })
     }
 

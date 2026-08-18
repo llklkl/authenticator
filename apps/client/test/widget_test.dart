@@ -34,11 +34,11 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('OTP').first);
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 100));
 
     expect(find.text('Example'), findsOneWidget);
     expect(find.text('alice'), findsOneWidget);
-    expect(find.text('123456'), findsOneWidget);
+    expect(find.text('123 456'), findsOneWidget);
     expect(service.lastImportedUri, contains('secret=TEST'));
 
     await tester.pumpWidget(const SizedBox());
@@ -108,7 +108,8 @@ class _FakeVaultService implements VaultService {
     BigInt handleId,
     String entryId,
     DateTime now,
-  ) async => const OtpValue(code: '123456', validForSeconds: 30);
+  ) async =>
+      const OtpValue(code: '123456', validForSeconds: 30, periodSeconds: 30);
 
   @override
   Future<void> createEntry(BigInt handleId, VaultEntryDraft draft) async {}

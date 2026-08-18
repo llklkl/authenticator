@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:authenticator_vault/src/l10n.dart';
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 
@@ -98,12 +99,12 @@ class _WindowButtons extends StatelessWidget {
     mainAxisSize: MainAxisSize.min,
     children: [
       _WindowButton(
-        tooltip: '最小化',
+        tooltip: context.tr('最小化'),
         icon: Icons.remove,
         onPressed: windowManager.minimize,
       ),
       _WindowButton(
-        tooltip: '最大化或还原',
+        tooltip: context.tr('最大化或还原'),
         icon: Icons.crop_square,
         onPressed: () async {
           if (await windowManager.isMaximized()) {
@@ -114,7 +115,7 @@ class _WindowButtons extends StatelessWidget {
         },
       ),
       _WindowButton(
-        tooltip: '关闭',
+        tooltip: context.tr('关闭'),
         icon: Icons.close,
         hoverColor: Theme.of(context).colorScheme.errorContainer,
         onPressed: windowManager.close,
