@@ -1,7 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math';
+import 'dart:typed_data';
 
+import 'package:authenticator_vault/src/features/security/platform_security_service.dart';
 import 'package:authenticator_vault/src/rust/api/simple.dart' as native;
 import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
@@ -13,18 +14,44 @@ class WorkspaceInfo {
     required this.id,
     required this.name,
     required this.path,
+    this.quickUnlockEnvelope,
   });
 
   final String id;
   final String name;
   final String path;
+  final Uint8List? quickUnlockEnvelope;
 
-  Map<String, Object> toJson() => {'id': id, 'name': name, 'path': path};
+  bool get quickUnlockEnabled => quickUnlockEnvelope != null;
+
+  Map<String, Object> toJson() => {
+    'id': id,
+    'name': name,
+    'path': path,
+    if (quickUnlockEnvelope case final envelope?)
+      'quickUnlockEnvelope': base64Encode(envelope),
+  };
 
   factory WorkspaceInfo.fromJson(Map<String, Object?> json) => WorkspaceInfo(
     id: json['id']! as String,
     name: json['name']! as String,
     path: json['path']! as String,
+    quickUnlockEnvelope: switch (json['quickUnlockEnvelope']) {
+      final String value => Uint8List.fromList(base64Decode(value)),
+      _ => null,
+    },
+  );
+
+  WorkspaceInfo copyWith({
+    Uint8List? quickUnlockEnvelope,
+    bool clear = false,
+  }) => WorkspaceInfo(
+    id: id,
+    name: name,
+    path: path,
+    quickUnlockEnvelope: clear
+        ? null
+        : quickUnlockEnvelope ?? this.quickUnlockEnvelope,
   );
 }
 
@@ -138,13 +165,53 @@ abstract interface class VaultService {
   );
 }
 
-class NativeVaultService implements VaultService {
-  NativeVaultService._(this._registryFile, this._vaultDirectory);
+class QuickUnlockOutcome {
+  const QuickUnlockOutcome({required this.opened, required this.failedIds});
+  final List<UnlockedWorkspace> opened;
+  final List<String> failedIds;
+}
+
+abstract interface class SecurityVaultService implements VaultService {
+  PlatformSecurityService get platformSecurity;
+  int get autoLockSeconds;
+  Future<void> setAutoLockSeconds(int seconds);
+  Future<bool> canQuickUnlock();
+  Future<List<WorkspaceInfo>> enableQuickUnlock(UnlockedWorkspace workspace);
+  Future<List<WorkspaceInfo>> disableQuickUnlock(WorkspaceInfo workspace);
+  Future<QuickUnlockOutcome> quickUnlock(List<WorkspaceInfo> workspaces);
+}
+
+class WorkspaceRegistryException implements Exception {
+  const WorkspaceRegistryException();
+}
+
+class NativeVaultService implements SecurityVaultService {
+  NativeVaultService._(
+    this._registryFile,
+    this._vaultDirectory,
+    this.platformSecurity,
+    this._newWorkspaceId,
+  );
+
+  NativeVaultService.forTesting({
+    required File registryFile,
+    required Directory vaultDirectory,
+    required PlatformSecurityService platformSecurity,
+    required String Function() newWorkspaceId,
+  }) : this._(registryFile, vaultDirectory, platformSecurity, newWorkspaceId);
 
   final File _registryFile;
   final Directory _vaultDirectory;
+  @override
+  final PlatformSecurityService platformSecurity;
+  final String Function() _newWorkspaceId;
+  List<WorkspaceInfo>? _cachedWorkspaces;
+  @override
+  int autoLockSeconds = 300;
 
-  static Future<NativeVaultService> create() async {
+  static Future<NativeVaultService> create({
+    PlatformSecurityService? platformSecurity,
+  }) async {
     final support = await getApplicationSupportDirectory();
     final vaultDirectory = Directory(
       '${support.path}${Platform.pathSeparator}vaults',
@@ -153,22 +220,58 @@ class NativeVaultService implements VaultService {
     return NativeVaultService._(
       File('${support.path}${Platform.pathSeparator}workspaces.json'),
       vaultDirectory,
+      platformSecurity ?? MethodChannelSecurityService(),
+      native.generateWorkspaceId,
     );
   }
 
   @override
   Future<List<WorkspaceInfo>> loadWorkspaces() async {
+    if (_cachedWorkspaces case final cached?) return List.of(cached);
     if (!await _registryFile.exists()) return [];
     try {
-      final decoded =
-          jsonDecode(await _registryFile.readAsString()) as List<Object?>;
-      return decoded
-          .map(
-            (value) => WorkspaceInfo.fromJson(value! as Map<String, Object?>),
-          )
-          .toList(growable: false);
+      final source = await _registryFile.readAsString();
+      final decoded = jsonDecode(source);
+      late List<WorkspaceInfo> workspaces;
+      if (decoded is List<Object?>) {
+        workspaces = decoded
+            .map((value) {
+              final legacy = WorkspaceInfo.fromJson(
+                value! as Map<String, Object?>,
+              );
+              return WorkspaceInfo(
+                id: _newWorkspaceId(),
+                name: legacy.name,
+                path: legacy.path,
+              );
+            })
+            .toList(growable: false);
+        await _registryFile.copy('${_registryFile.path}.bak');
+        await _writeRegistry(workspaces);
+      } else {
+        final root = decoded as Map<String, Object?>;
+        if (root['version'] != 1) throw const FormatException();
+        autoLockSeconds = root['autoLockSeconds']! as int;
+        if (!const [0, 30, 60, 300, 900].contains(autoLockSeconds)) {
+          throw const FormatException();
+        }
+        workspaces = (root['workspaces']! as List<Object?>)
+            .map((value) {
+              return WorkspaceInfo.fromJson(value! as Map<String, Object?>);
+            })
+            .toList(growable: false);
+      }
+      if (workspaces.any((item) => item.quickUnlockEnabled) &&
+          !await platformSecurity.hasKeyring()) {
+        workspaces = workspaces
+            .map((item) => item.copyWith(clear: true))
+            .toList();
+        await _writeRegistry(workspaces);
+      }
+      _cachedWorkspaces = workspaces;
+      return List.of(workspaces);
     } on Object {
-      return [];
+      throw const WorkspaceRegistryException();
     }
   }
 
@@ -187,8 +290,7 @@ class NativeVaultService implements VaultService {
     String name,
     String password,
   ) async {
-    final random = Random.secure().nextInt(1 << 32).toRadixString(16);
-    final id = '${DateTime.now().microsecondsSinceEpoch}-$random';
+    final id = _newWorkspaceId();
     final path = '${_vaultDirectory.path}${Platform.pathSeparator}$id.kdbx';
     final handle = await native.createVault(
       path: path,
@@ -206,9 +308,16 @@ class NativeVaultService implements VaultService {
     String path,
     String password,
   ) async {
-    final handle = await native.openVault(path: path, masterPassword: password);
-    final id = 'import-${DateTime.now().microsecondsSinceEpoch}';
-    final workspace = WorkspaceInfo(id: id, name: name, path: path);
+    final id = _newWorkspaceId();
+    final internalPath =
+        '${_vaultDirectory.path}${Platform.pathSeparator}$id.kdbx';
+    final handle = await native.importVault(
+      sourcePath: path,
+      destinationPath: internalPath,
+      name: name,
+      masterPassword: password,
+    );
+    final workspace = WorkspaceInfo(id: id, name: name, path: internalPath);
     await _appendWorkspace(workspace);
     return UnlockedWorkspace(workspace: workspace, handleId: handle.id);
   }
@@ -327,6 +436,145 @@ class NativeVaultService implements VaultService {
     return SyncSummary(attempts: result.attempts, merged: result.merged);
   }
 
+  @override
+  Future<void> setAutoLockSeconds(int seconds) async {
+    if (!const [0, 30, 60, 300, 900].contains(seconds)) {
+      throw ArgumentError.value(seconds);
+    }
+    autoLockSeconds = seconds;
+    await _writeRegistry(await loadWorkspaces());
+  }
+
+  @override
+  Future<bool> canQuickUnlock() => platformSecurity.canAuthenticateStrong();
+
+  @override
+  Future<List<WorkspaceInfo>> enableQuickUnlock(
+    UnlockedWorkspace workspace,
+  ) async {
+    final workspaces = await loadWorkspaces();
+    Uint8List? oldKeyring;
+    native.QuickUnlockEnrollment? enrollment;
+    try {
+      if (workspaces.any((item) => item.quickUnlockEnabled)) {
+        oldKeyring = await platformSecurity.unsealKeyring();
+      }
+      enrollment = await native.prepareQuickUnlockEnrollment(
+        handleId: workspace.handleId,
+        workspaceId: workspace.workspace.id,
+        existingKeyring: oldKeyring,
+      );
+      await platformSecurity.sealKeyring(enrollment.updatedKeyring);
+      final updated = workspaces
+          .map((item) {
+            return item.id == workspace.workspace.id
+                ? item.copyWith(
+                    quickUnlockEnvelope: Uint8List.fromList(
+                      enrollment!.envelope,
+                    ),
+                  )
+                : item;
+          })
+          .toList(growable: false);
+      await _writeRegistry(updated);
+      return updated;
+    } on PlatformSecurityFailure catch (error) {
+      await _handleInvalidation(error);
+      rethrow;
+    } finally {
+      if (oldKeyring != null) eraseBytes(oldKeyring);
+      if (enrollment != null) eraseBytes(enrollment.updatedKeyring);
+    }
+  }
+
+  @override
+  Future<List<WorkspaceInfo>> disableQuickUnlock(
+    WorkspaceInfo workspace,
+  ) async {
+    final workspaces = await loadWorkspaces();
+    final enabled = workspaces.where((item) => item.quickUnlockEnabled).length;
+    if (!workspace.quickUnlockEnabled) return workspaces;
+    if (enabled == 1) {
+      await platformSecurity.clearKeyring();
+    } else {
+      Uint8List? oldKeyring;
+      Uint8List? updatedKeyring;
+      try {
+        oldKeyring = await platformSecurity.unsealKeyring();
+        updatedKeyring = await native.removeQuickUnlockMaterial(
+          workspaceId: workspace.id,
+          keyring: oldKeyring,
+        );
+        await platformSecurity.sealKeyring(updatedKeyring);
+      } on PlatformSecurityFailure catch (error) {
+        await _handleInvalidation(error);
+        rethrow;
+      } finally {
+        if (oldKeyring != null) eraseBytes(oldKeyring);
+        if (updatedKeyring != null) eraseBytes(updatedKeyring);
+      }
+    }
+    final updated = workspaces
+        .map((item) {
+          return item.id == workspace.id ? item.copyWith(clear: true) : item;
+        })
+        .toList(growable: false);
+    await _writeRegistry(updated);
+    return updated;
+  }
+
+  @override
+  Future<QuickUnlockOutcome> quickUnlock(List<WorkspaceInfo> workspaces) async {
+    final selected = workspaces
+        .where((item) => item.quickUnlockEnabled)
+        .toList();
+    if (selected.isEmpty) {
+      return const QuickUnlockOutcome(opened: [], failedIds: []);
+    }
+    Uint8List? keyring;
+    try {
+      keyring = await platformSecurity.unsealKeyring();
+      final result = await native.openVaultsWithQuickUnlock(
+        requests: selected
+            .map((item) {
+              return native.QuickUnlockRequest(
+                workspaceId: item.id,
+                path: item.path,
+                envelope: item.quickUnlockEnvelope!,
+              );
+            })
+            .toList(growable: false),
+        keyring: keyring,
+      );
+      final byId = {for (final item in selected) item.id: item};
+      return QuickUnlockOutcome(
+        opened: result.opened
+            .map((value) {
+              return UnlockedWorkspace(
+                workspace: byId[value.workspaceId]!,
+                handleId: value.handleId,
+              );
+            })
+            .toList(growable: false),
+        failedIds: result.failedWorkspaceIds,
+      );
+    } on PlatformSecurityFailure catch (error) {
+      await _handleInvalidation(error);
+      rethrow;
+    } finally {
+      if (keyring != null) eraseBytes(keyring);
+    }
+  }
+
+  Future<void> _handleInvalidation(PlatformSecurityFailure error) async {
+    if (!error.isKeyInvalidated) return;
+    await platformSecurity.clearKeyring();
+    final workspaces = (await loadWorkspaces())
+        .map((item) => item.copyWith(clear: true))
+        .toList(growable: false);
+    await _writeRegistry(workspaces);
+  }
+
   Future<void> _appendWorkspace(WorkspaceInfo workspace) async {
     final workspaces = await loadWorkspaces();
     if (workspaces.any((item) => item.path == workspace.path)) return;
@@ -336,10 +584,15 @@ class NativeVaultService implements VaultService {
   Future<void> _writeRegistry(List<WorkspaceInfo> workspaces) async {
     final temporary = File('${_registryFile.path}.tmp');
     await temporary.writeAsString(
-      jsonEncode(workspaces.map((item) => item.toJson()).toList()),
+      jsonEncode({
+        'version': 1,
+        'autoLockSeconds': autoLockSeconds,
+        'workspaces': workspaces.map((item) => item.toJson()).toList(),
+      }),
       flush: true,
     );
     await temporary.rename(_registryFile.path);
+    _cachedWorkspaces = List.of(workspaces);
   }
 }
 

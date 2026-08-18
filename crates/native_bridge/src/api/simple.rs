@@ -10,6 +10,7 @@ use sync_core::{FileBackupStore, SyncEngine, SyncError, VaultMerger, WebDavProvi
 use uuid::Uuid;
 use vault_core::{
     EntryKind, EntrySecretField, FileVaultSession, OtpConfig, VaultEntry, VaultError,
+    quick_unlock_key, remove_quick_unlock,
 };
 use zeroize::Zeroizing;
 
@@ -49,6 +50,51 @@ pub struct OtpPreview {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VaultHandle {
     pub id: u64,
+}
+
+pub struct QuickUnlockEnrollment {
+    pub envelope: Vec<u8>,
+    pub updated_keyring: Vec<u8>,
+}
+
+impl fmt::Debug for QuickUnlockEnrollment {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("QuickUnlockEnrollment")
+            .field("envelope", &"[REDACTED]")
+            .field("updated_keyring", &"[REDACTED]")
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct QuickUnlockRequest {
+    pub workspace_id: String,
+    pub path: String,
+    pub envelope: Vec<u8>,
+}
+
+impl fmt::Debug for QuickUnlockRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("QuickUnlockRequest")
+            .field("workspace_id", &self.workspace_id)
+            .field("path", &"[REDACTED]")
+            .field("envelope", &"[REDACTED]")
+            .finish()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuickUnlockOpened {
+    pub workspace_id: String,
+    pub handle_id: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuickUnlockBatchResult {
+    pub opened: Vec<QuickUnlockOpened>,
+    pub failed_workspace_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,6 +171,7 @@ pub enum BridgeError {
     FileWrite,
     SessionUnavailable,
     SyncFailed,
+    QuickUnlockFailed,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -156,6 +203,104 @@ pub fn open_vault(path: String, master_password: String) -> Result<VaultHandle, 
     ensure_path_available(&sessions, &identity)?;
     let session = FileVaultSession::open(&identity, master_password)?;
     insert_vault_session(&mut sessions, identity, session)
+}
+
+/// Return a cryptographically random stable workspace identifier.
+#[frb(sync)]
+pub fn generate_workspace_id() -> String {
+    Uuid::new_v4().to_string()
+}
+
+/// Validate and copy an external vault into app-owned storage before opening it.
+pub fn import_vault(
+    source_path: String,
+    destination_path: String,
+    name: String,
+    master_password: String,
+) -> Result<VaultHandle, BridgeError> {
+    if name.trim().is_empty() {
+        return Err(BridgeError::InvalidInput);
+    }
+    let source = path_identity(Path::new(&source_path), true)?;
+    let destination = path_identity(Path::new(&destination_path), false)?;
+    if source == destination {
+        return Err(BridgeError::InvalidInput);
+    }
+    let mut sessions = write_vault_sessions()?;
+    ensure_path_available(&sessions, &destination)?;
+    let session = FileVaultSession::import(source, &destination, master_password)?;
+    insert_vault_session(&mut sessions, destination, session)
+}
+
+pub fn prepare_quick_unlock_enrollment(
+    handle_id: u64,
+    workspace_id: String,
+    existing_keyring: Option<Vec<u8>>,
+) -> Result<QuickUnlockEnrollment, BridgeError> {
+    let workspace_id = parse_uuid(&workspace_id)?;
+    let existing_keyring = existing_keyring.map(Zeroizing::new);
+    let session = get_vault(handle_id)?;
+    let session = session
+        .lock()
+        .map_err(|_| BridgeError::SessionUnavailable)?;
+    let enrollment = session.prepare_quick_unlock(
+        workspace_id,
+        existing_keyring.as_ref().map(|value| value.as_slice()),
+    )?;
+    Ok(QuickUnlockEnrollment {
+        envelope: enrollment.envelope.to_vec(),
+        updated_keyring: enrollment.updated_keyring.to_vec(),
+    })
+}
+
+pub fn remove_quick_unlock_material(
+    workspace_id: String,
+    keyring: Vec<u8>,
+) -> Result<Vec<u8>, BridgeError> {
+    let workspace_id = parse_uuid(&workspace_id)?;
+    let keyring = Zeroizing::new(keyring);
+    Ok(remove_quick_unlock(&keyring, workspace_id)?.to_vec())
+}
+
+/// Unlock multiple independent workspaces after one platform biometric prompt.
+/// Individual failures are isolated and reported without exposing their cause.
+pub fn open_vaults_with_quick_unlock(
+    requests: Vec<QuickUnlockRequest>,
+    keyring: Vec<u8>,
+) -> Result<QuickUnlockBatchResult, BridgeError> {
+    let keyring = Zeroizing::new(keyring);
+    let mut sessions = write_vault_sessions()?;
+    let mut opened = Vec::new();
+    let mut failed_workspace_ids = Vec::new();
+
+    for request in requests {
+        let result = (|| {
+            let workspace_id = parse_uuid(&request.workspace_id)?;
+            let path = path_identity(Path::new(&request.path), true)?;
+            ensure_path_available(&sessions, &path)?;
+            let key = quick_unlock_key(&keyring, workspace_id)?;
+            let session = FileVaultSession::open_with_quick_unlock(
+                &path,
+                workspace_id,
+                &request.envelope,
+                &*key,
+            )?;
+            let handle = insert_vault_session(&mut sessions, path, session)?;
+            Ok::<_, BridgeError>(QuickUnlockOpened {
+                workspace_id: request.workspace_id.clone(),
+                handle_id: handle.id,
+            })
+        })();
+        match result {
+            Ok(value) => opened.push(value),
+            Err(_) => failed_workspace_ids.push(request.workspace_id),
+        }
+    }
+
+    Ok(QuickUnlockBatchResult {
+        opened,
+        failed_workspace_ids,
+    })
 }
 
 #[frb(sync)]
@@ -552,6 +697,7 @@ impl From<VaultError> for BridgeError {
             VaultError::EntryNotFound => Self::EntryNotFound,
             VaultError::FieldUnavailable => Self::FieldUnavailable,
             VaultError::VaultAlreadyOpen => Self::VaultAlreadyOpen,
+            VaultError::QuickUnlock => Self::QuickUnlockFailed,
             VaultError::DuplicateWorkspace
             | VaultError::WorkspaceNotFound
             | VaultError::InvalidWorkspace => Self::InvalidInput,
@@ -568,6 +714,8 @@ impl From<SyncError> for BridgeError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    static VAULT_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     fn input() -> VaultEntryInput {
         VaultEntryInput {
@@ -588,6 +736,7 @@ mod tests {
 
     #[test]
     fn persistent_vault_api_crud_and_lock() {
+        let _test_guard = VAULT_TEST_LOCK.lock().unwrap();
         lock_all_vaults().unwrap();
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("vault.kdbx");
@@ -635,5 +784,80 @@ mod tests {
         let preview = current_otp(handle.id, 0).unwrap();
         assert_eq!(preview.code.len(), 6);
         remove_otp(handle.id).unwrap();
+    }
+
+    #[test]
+    fn imports_into_internal_path_and_quick_unlocks_multiple_workspaces() {
+        let _test_guard = VAULT_TEST_LOCK.lock().unwrap();
+        lock_all_vaults().unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let first_path = directory.path().join("first.kdbx");
+        let source_path = directory.path().join("source.kdbx");
+        let imported_path = directory.path().join("internal").join("second.kdbx");
+        std::fs::create_dir_all(imported_path.parent().unwrap()).unwrap();
+        let first_id = generate_workspace_id();
+        let second_id = generate_workspace_id();
+        let password = "a sufficiently long password";
+
+        let first = create_vault(
+            first_path.to_string_lossy().into_owned(),
+            "First".into(),
+            password.into(),
+        )
+        .unwrap();
+        FileVaultSession::create(&source_path, "Second", password.into()).unwrap();
+        let second = import_vault(
+            source_path.to_string_lossy().into_owned(),
+            imported_path.to_string_lossy().into_owned(),
+            "Second".into(),
+            password.into(),
+        )
+        .unwrap();
+        let first_enrollment =
+            prepare_quick_unlock_enrollment(first.id, first_id.clone(), None).unwrap();
+        let second_enrollment = prepare_quick_unlock_enrollment(
+            second.id,
+            second_id.clone(),
+            Some(first_enrollment.updated_keyring),
+        )
+        .unwrap();
+        lock_all_vaults().unwrap();
+
+        let result = open_vaults_with_quick_unlock(
+            vec![
+                QuickUnlockRequest {
+                    workspace_id: first_id.clone(),
+                    path: first_path.to_string_lossy().into_owned(),
+                    envelope: first_enrollment.envelope,
+                },
+                QuickUnlockRequest {
+                    workspace_id: second_id.clone(),
+                    path: imported_path.to_string_lossy().into_owned(),
+                    envelope: second_enrollment.envelope,
+                },
+                QuickUnlockRequest {
+                    workspace_id: generate_workspace_id(),
+                    path: imported_path.to_string_lossy().into_owned(),
+                    envelope: vec![0],
+                },
+            ],
+            second_enrollment.updated_keyring,
+        )
+        .unwrap();
+        assert_eq!(result.opened.len(), 2);
+        assert_eq!(result.failed_workspace_ids.len(), 1);
+        assert!(
+            result
+                .opened
+                .iter()
+                .any(|value| value.workspace_id == first_id)
+        );
+        assert!(
+            result
+                .opened
+                .iter()
+                .any(|value| value.workspace_id == second_id)
+        );
+        lock_all_vaults().unwrap();
     }
 }

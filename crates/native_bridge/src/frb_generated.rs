@@ -38,7 +38,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -231058654;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1487198375;
 
 // Section: executor
 
@@ -247,6 +247,35 @@ fn wire__crate__api__simple__delete_entry_impl(
         },
     )
 }
+fn wire__crate__api__simple__generate_workspace_id_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "generate_workspace_id",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let output_ok = Result::<_, ()>::Ok(crate::api::simple::generate_workspace_id())?;
+                Ok(output_ok)
+            })())
+        },
+    )
+}
 fn wire__crate__api__simple__import_otp_to_vault_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -313,6 +342,47 @@ fn wire__crate__api__simple__import_otp_uri_impl(
                 let output_ok = crate::api::simple::import_otp_uri(api_uri)?;
                 Ok(output_ok)
             })())
+        },
+    )
+}
+fn wire__crate__api__simple__import_vault_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "import_vault",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_source_path = <String>::sse_decode(&mut deserializer);
+            let api_destination_path = <String>::sse_decode(&mut deserializer);
+            let api_name = <String>::sse_decode(&mut deserializer);
+            let api_master_password = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, crate::api::simple::BridgeError>((move || {
+                    let output_ok = crate::api::simple::import_vault(
+                        api_source_path,
+                        api_destination_path,
+                        api_name,
+                        api_master_password,
+                    )?;
+                    Ok(output_ok)
+                })())
+            }
         },
     )
 }
@@ -443,6 +513,83 @@ fn wire__crate__api__simple__open_vault_impl(
         },
     )
 }
+fn wire__crate__api__simple__open_vaults_with_quick_unlock_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "open_vaults_with_quick_unlock",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_requests =
+                <Vec<crate::api::simple::QuickUnlockRequest>>::sse_decode(&mut deserializer);
+            let api_keyring = <Vec<u8>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, crate::api::simple::BridgeError>((move || {
+                    let output_ok = crate::api::simple::open_vaults_with_quick_unlock(
+                        api_requests,
+                        api_keyring,
+                    )?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__simple__prepare_quick_unlock_enrollment_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "prepare_quick_unlock_enrollment",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_handle_id = <u64>::sse_decode(&mut deserializer);
+            let api_workspace_id = <String>::sse_decode(&mut deserializer);
+            let api_existing_keyring = <Option<Vec<u8>>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, crate::api::simple::BridgeError>((move || {
+                    let output_ok = crate::api::simple::prepare_quick_unlock_enrollment(
+                        api_handle_id,
+                        api_workspace_id,
+                        api_existing_keyring,
+                    )?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
 fn wire__crate__api__simple__remove_otp_impl(
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
@@ -470,6 +617,43 @@ fn wire__crate__api__simple__remove_otp_impl(
                 let output_ok = crate::api::simple::remove_otp(api_handle_id)?;
                 Ok(output_ok)
             })())
+        },
+    )
+}
+fn wire__crate__api__simple__remove_quick_unlock_material_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "remove_quick_unlock_material",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_workspace_id = <String>::sse_decode(&mut deserializer);
+            let api_keyring = <Vec<u8>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, crate::api::simple::BridgeError>((move || {
+                    let output_ok = crate::api::simple::remove_quick_unlock_material(
+                        api_workspace_id,
+                        api_keyring,
+                    )?;
+                    Ok(output_ok)
+                })())
+            }
         },
     )
 }
@@ -622,6 +806,7 @@ impl SseDecode for crate::api::simple::BridgeError {
             9 => crate::api::simple::BridgeError::FileWrite,
             10 => crate::api::simple::BridgeError::SessionUnavailable,
             11 => crate::api::simple::BridgeError::SyncFailed,
+            12 => crate::api::simple::BridgeError::QuickUnlockFailed,
             _ => unreachable!("Invalid variant for BridgeError: {}", inner),
         };
     }
@@ -665,6 +850,34 @@ impl SseDecode for Vec<u8> {
     }
 }
 
+impl SseDecode for Vec<crate::api::simple::QuickUnlockOpened> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::simple::QuickUnlockOpened>::sse_decode(
+                deserializer,
+            ));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<crate::api::simple::QuickUnlockRequest> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::simple::QuickUnlockRequest>::sse_decode(
+                deserializer,
+            ));
+        }
+        return ans_;
+    }
+}
+
 impl SseDecode for Vec<crate::api::simple::VaultEntryView> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -701,6 +914,17 @@ impl SseDecode for Option<u64> {
     }
 }
 
+impl SseDecode for Option<Vec<u8>> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<Vec<u8>>::sse_decode(deserializer));
+        } else {
+            return None;
+        }
+    }
+}
+
 impl SseDecode for crate::api::simple::OtpHandle {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -723,6 +947,56 @@ impl SseDecode for crate::api::simple::OtpPreview {
         return crate::api::simple::OtpPreview {
             code: var_code,
             valid_for_seconds: var_validForSeconds,
+        };
+    }
+}
+
+impl SseDecode for crate::api::simple::QuickUnlockBatchResult {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_opened = <Vec<crate::api::simple::QuickUnlockOpened>>::sse_decode(deserializer);
+        let mut var_failedWorkspaceIds = <Vec<String>>::sse_decode(deserializer);
+        return crate::api::simple::QuickUnlockBatchResult {
+            opened: var_opened,
+            failed_workspace_ids: var_failedWorkspaceIds,
+        };
+    }
+}
+
+impl SseDecode for crate::api::simple::QuickUnlockEnrollment {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_envelope = <Vec<u8>>::sse_decode(deserializer);
+        let mut var_updatedKeyring = <Vec<u8>>::sse_decode(deserializer);
+        return crate::api::simple::QuickUnlockEnrollment {
+            envelope: var_envelope,
+            updated_keyring: var_updatedKeyring,
+        };
+    }
+}
+
+impl SseDecode for crate::api::simple::QuickUnlockOpened {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_workspaceId = <String>::sse_decode(deserializer);
+        let mut var_handleId = <u64>::sse_decode(deserializer);
+        return crate::api::simple::QuickUnlockOpened {
+            workspace_id: var_workspaceId,
+            handle_id: var_handleId,
+        };
+    }
+}
+
+impl SseDecode for crate::api::simple::QuickUnlockRequest {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_workspaceId = <String>::sse_decode(deserializer);
+        let mut var_path = <String>::sse_decode(deserializer);
+        let mut var_envelope = <Vec<u8>>::sse_decode(deserializer);
+        return crate::api::simple::QuickUnlockRequest {
+            workspace_id: var_workspaceId,
+            path: var_path,
+            envelope: var_envelope,
         };
     }
 }
@@ -865,11 +1139,30 @@ fn pde_ffi_dispatcher_primary_impl(
         2 => wire__crate__api__simple__create_entry_impl(port, ptr, rust_vec_len, data_len),
         3 => wire__crate__api__simple__create_vault_impl(port, ptr, rust_vec_len, data_len),
         6 => wire__crate__api__simple__delete_entry_impl(port, ptr, rust_vec_len, data_len),
-        7 => wire__crate__api__simple__import_otp_to_vault_impl(port, ptr, rust_vec_len, data_len),
-        9 => wire__crate__api__simple__init_app_impl(port, ptr, rust_vec_len, data_len),
-        12 => wire__crate__api__simple__open_vault_impl(port, ptr, rust_vec_len, data_len),
-        15 => wire__crate__api__simple__sync_webdav_impl(port, ptr, rust_vec_len, data_len),
-        16 => wire__crate__api__simple__update_entry_impl(port, ptr, rust_vec_len, data_len),
+        8 => wire__crate__api__simple__import_otp_to_vault_impl(port, ptr, rust_vec_len, data_len),
+        10 => wire__crate__api__simple__import_vault_impl(port, ptr, rust_vec_len, data_len),
+        11 => wire__crate__api__simple__init_app_impl(port, ptr, rust_vec_len, data_len),
+        14 => wire__crate__api__simple__open_vault_impl(port, ptr, rust_vec_len, data_len),
+        15 => wire__crate__api__simple__open_vaults_with_quick_unlock_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        16 => wire__crate__api__simple__prepare_quick_unlock_enrollment_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        18 => wire__crate__api__simple__remove_quick_unlock_material_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        20 => wire__crate__api__simple__sync_webdav_impl(port, ptr, rust_vec_len, data_len),
+        21 => wire__crate__api__simple__update_entry_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -885,11 +1178,12 @@ fn pde_ffi_dispatcher_sync_impl(
         1 => wire__crate__api__simple__close_vault_impl(ptr, rust_vec_len, data_len),
         4 => wire__crate__api__simple__current_entry_otp_impl(ptr, rust_vec_len, data_len),
         5 => wire__crate__api__simple__current_otp_impl(ptr, rust_vec_len, data_len),
-        8 => wire__crate__api__simple__import_otp_uri_impl(ptr, rust_vec_len, data_len),
-        10 => wire__crate__api__simple__list_entries_impl(ptr, rust_vec_len, data_len),
-        11 => wire__crate__api__simple__lock_all_vaults_impl(ptr, rust_vec_len, data_len),
-        13 => wire__crate__api__simple__remove_otp_impl(ptr, rust_vec_len, data_len),
-        14 => wire__crate__api__simple__reveal_entry_field_impl(ptr, rust_vec_len, data_len),
+        7 => wire__crate__api__simple__generate_workspace_id_impl(ptr, rust_vec_len, data_len),
+        9 => wire__crate__api__simple__import_otp_uri_impl(ptr, rust_vec_len, data_len),
+        12 => wire__crate__api__simple__list_entries_impl(ptr, rust_vec_len, data_len),
+        13 => wire__crate__api__simple__lock_all_vaults_impl(ptr, rust_vec_len, data_len),
+        17 => wire__crate__api__simple__remove_otp_impl(ptr, rust_vec_len, data_len),
+        19 => wire__crate__api__simple__reveal_entry_field_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -912,6 +1206,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::simple::BridgeError {
             Self::FileWrite => 9.into_dart(),
             Self::SessionUnavailable => 10.into_dart(),
             Self::SyncFailed => 11.into_dart(),
+            Self::QuickUnlockFailed => 12.into_dart(),
             _ => unreachable!(),
         }
     }
@@ -964,6 +1259,91 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::simple::OtpPreview>
     for crate::api::simple::OtpPreview
 {
     fn into_into_dart(self) -> crate::api::simple::OtpPreview {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::simple::QuickUnlockBatchResult {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.opened.into_into_dart().into_dart(),
+            self.failed_workspace_ids.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::simple::QuickUnlockBatchResult
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::simple::QuickUnlockBatchResult>
+    for crate::api::simple::QuickUnlockBatchResult
+{
+    fn into_into_dart(self) -> crate::api::simple::QuickUnlockBatchResult {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::simple::QuickUnlockEnrollment {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.envelope.into_into_dart().into_dart(),
+            self.updated_keyring.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::simple::QuickUnlockEnrollment
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::simple::QuickUnlockEnrollment>
+    for crate::api::simple::QuickUnlockEnrollment
+{
+    fn into_into_dart(self) -> crate::api::simple::QuickUnlockEnrollment {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::simple::QuickUnlockOpened {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.workspace_id.into_into_dart().into_dart(),
+            self.handle_id.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::simple::QuickUnlockOpened
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::simple::QuickUnlockOpened>
+    for crate::api::simple::QuickUnlockOpened
+{
+    fn into_into_dart(self) -> crate::api::simple::QuickUnlockOpened {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::simple::QuickUnlockRequest {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.workspace_id.into_into_dart().into_dart(),
+            self.path.into_into_dart().into_dart(),
+            self.envelope.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::simple::QuickUnlockRequest
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::simple::QuickUnlockRequest>
+    for crate::api::simple::QuickUnlockRequest
+{
+    fn into_into_dart(self) -> crate::api::simple::QuickUnlockRequest {
         self
     }
 }
@@ -1138,6 +1518,7 @@ impl SseEncode for crate::api::simple::BridgeError {
                 crate::api::simple::BridgeError::FileWrite => 9,
                 crate::api::simple::BridgeError::SessionUnavailable => 10,
                 crate::api::simple::BridgeError::SyncFailed => 11,
+                crate::api::simple::BridgeError::QuickUnlockFailed => 12,
                 _ => {
                     unimplemented!("");
                 }
@@ -1181,6 +1562,26 @@ impl SseEncode for Vec<u8> {
     }
 }
 
+impl SseEncode for Vec<crate::api::simple::QuickUnlockOpened> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::simple::QuickUnlockOpened>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<crate::api::simple::QuickUnlockRequest> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::simple::QuickUnlockRequest>::sse_encode(item, serializer);
+        }
+    }
+}
+
 impl SseEncode for Vec<crate::api::simple::VaultEntryView> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -1211,6 +1612,16 @@ impl SseEncode for Option<u64> {
     }
 }
 
+impl SseEncode for Option<Vec<u8>> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <Vec<u8>>::sse_encode(value, serializer);
+        }
+    }
+}
+
 impl SseEncode for crate::api::simple::OtpHandle {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -1225,6 +1636,39 @@ impl SseEncode for crate::api::simple::OtpPreview {
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <String>::sse_encode(self.code, serializer);
         <Option<u64>>::sse_encode(self.valid_for_seconds, serializer);
+    }
+}
+
+impl SseEncode for crate::api::simple::QuickUnlockBatchResult {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <Vec<crate::api::simple::QuickUnlockOpened>>::sse_encode(self.opened, serializer);
+        <Vec<String>>::sse_encode(self.failed_workspace_ids, serializer);
+    }
+}
+
+impl SseEncode for crate::api::simple::QuickUnlockEnrollment {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <Vec<u8>>::sse_encode(self.envelope, serializer);
+        <Vec<u8>>::sse_encode(self.updated_keyring, serializer);
+    }
+}
+
+impl SseEncode for crate::api::simple::QuickUnlockOpened {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.workspace_id, serializer);
+        <u64>::sse_encode(self.handle_id, serializer);
+    }
+}
+
+impl SseEncode for crate::api::simple::QuickUnlockRequest {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.workspace_id, serializer);
+        <String>::sse_encode(self.path, serializer);
+        <Vec<u8>>::sse_encode(self.envelope, serializer);
     }
 }
 

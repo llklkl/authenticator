@@ -51,3 +51,20 @@ jobs:
       - name: Build Linux FFI bundle
         working-directory: apps/client
         run: flutter build linux --debug
+
+  android:
+    name: Android debug APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Resolve Dart dependencies
+        working-directory: apps/client
+        run: flutter pub get
+      - name: Build Android debug APK
+        working-directory: apps/client
+        run: flutter build apk --debug

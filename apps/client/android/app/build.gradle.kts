@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace = "dev.authenticator.vault.authenticator_vault"
+    namespace = "top.llklkl.authenticatorvault"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -15,8 +15,7 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "dev.authenticator.vault.authenticator_vault"
+        applicationId = "top.llklkl.authenticatorvault"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
@@ -31,11 +30,13 @@ android {
 
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            // Release signing must be supplied by the distribution pipeline.
         }
     }
+}
+
+dependencies {
+    implementation("androidx.biometric:biometric:1.1.0")
 }
 
 kotlin {

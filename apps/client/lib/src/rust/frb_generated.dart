@@ -69,7 +69,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => -231058654;
+  int get rustContentHash => 1487198375;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -110,6 +110,8 @@ abstract class RustLibApi extends BaseApi {
     required String entryId,
   });
 
+  String crateApiSimpleGenerateWorkspaceId();
+
   Future<String> crateApiSimpleImportOtpToVault({
     required BigInt handleId,
     required String uri,
@@ -117,6 +119,13 @@ abstract class RustLibApi extends BaseApi {
   });
 
   OtpHandle crateApiSimpleImportOtpUri({required String uri});
+
+  Future<VaultHandle> crateApiSimpleImportVault({
+    required String sourcePath,
+    required String destinationPath,
+    required String name,
+    required String masterPassword,
+  });
 
   Future<void> crateApiSimpleInitApp();
 
@@ -129,7 +138,23 @@ abstract class RustLibApi extends BaseApi {
     required String masterPassword,
   });
 
+  Future<QuickUnlockBatchResult> crateApiSimpleOpenVaultsWithQuickUnlock({
+    required List<QuickUnlockRequest> requests,
+    required List<int> keyring,
+  });
+
+  Future<QuickUnlockEnrollment> crateApiSimplePrepareQuickUnlockEnrollment({
+    required BigInt handleId,
+    required String workspaceId,
+    Uint8List? existingKeyring,
+  });
+
   void crateApiSimpleRemoveOtp({required BigInt handleId});
+
+  Future<Uint8List> crateApiSimpleRemoveQuickUnlockMaterial({
+    required String workspaceId,
+    required List<int> keyring,
+  });
 
   String crateApiSimpleRevealEntryField({
     required BigInt handleId,
@@ -350,6 +375,28 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   );
 
   @override
+  String crateApiSimpleGenerateWorkspaceId() {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 7)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_String,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiSimpleGenerateWorkspaceIdConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleGenerateWorkspaceIdConstMeta =>
+      const TaskConstMeta(debugName: "generate_workspace_id", argNames: []);
+
+  @override
   Future<String> crateApiSimpleImportOtpToVault({
     required BigInt handleId,
     required String uri,
@@ -365,7 +412,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 7,
+            funcId: 8,
             port: port_,
           );
         },
@@ -393,7 +440,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(uri, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 8)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 9)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_otp_handle,
@@ -410,6 +457,44 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(debugName: "import_otp_uri", argNames: ["uri"]);
 
   @override
+  Future<VaultHandle> crateApiSimpleImportVault({
+    required String sourcePath,
+    required String destinationPath,
+    required String name,
+    required String masterPassword,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(sourcePath, serializer);
+          sse_encode_String(destinationPath, serializer);
+          sse_encode_String(name, serializer);
+          sse_encode_String(masterPassword, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 10,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_vault_handle,
+          decodeErrorData: sse_decode_bridge_error,
+        ),
+        constMeta: kCrateApiSimpleImportVaultConstMeta,
+        argValues: [sourcePath, destinationPath, name, masterPassword],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleImportVaultConstMeta => const TaskConstMeta(
+    debugName: "import_vault",
+    argNames: ["sourcePath", "destinationPath", "name", "masterPassword"],
+  );
+
+  @override
   Future<void> crateApiSimpleInitApp() {
     return handler.executeNormal(
       NormalTask(
@@ -418,7 +503,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 9,
+            funcId: 11,
             port: port_,
           );
         },
@@ -443,7 +528,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_u_64(handleId, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 10)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 12)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_list_vault_entry_view,
@@ -465,7 +550,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 11)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 13)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -495,7 +580,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 12,
+            funcId: 14,
             port: port_,
           );
         },
@@ -516,13 +601,85 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   );
 
   @override
+  Future<QuickUnlockBatchResult> crateApiSimpleOpenVaultsWithQuickUnlock({
+    required List<QuickUnlockRequest> requests,
+    required List<int> keyring,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_list_quick_unlock_request(requests, serializer);
+          sse_encode_list_prim_u_8_loose(keyring, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 15,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_quick_unlock_batch_result,
+          decodeErrorData: sse_decode_bridge_error,
+        ),
+        constMeta: kCrateApiSimpleOpenVaultsWithQuickUnlockConstMeta,
+        argValues: [requests, keyring],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleOpenVaultsWithQuickUnlockConstMeta =>
+      const TaskConstMeta(
+        debugName: "open_vaults_with_quick_unlock",
+        argNames: ["requests", "keyring"],
+      );
+
+  @override
+  Future<QuickUnlockEnrollment> crateApiSimplePrepareQuickUnlockEnrollment({
+    required BigInt handleId,
+    required String workspaceId,
+    Uint8List? existingKeyring,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_u_64(handleId, serializer);
+          sse_encode_String(workspaceId, serializer);
+          sse_encode_opt_list_prim_u_8_strict(existingKeyring, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 16,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_quick_unlock_enrollment,
+          decodeErrorData: sse_decode_bridge_error,
+        ),
+        constMeta: kCrateApiSimplePrepareQuickUnlockEnrollmentConstMeta,
+        argValues: [handleId, workspaceId, existingKeyring],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimplePrepareQuickUnlockEnrollmentConstMeta =>
+      const TaskConstMeta(
+        debugName: "prepare_quick_unlock_enrollment",
+        argNames: ["handleId", "workspaceId", "existingKeyring"],
+      );
+
+  @override
   void crateApiSimpleRemoveOtp({required BigInt handleId}) {
     return handler.executeSync(
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_u_64(handleId, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 13)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 17)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -539,6 +696,41 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(debugName: "remove_otp", argNames: ["handleId"]);
 
   @override
+  Future<Uint8List> crateApiSimpleRemoveQuickUnlockMaterial({
+    required String workspaceId,
+    required List<int> keyring,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(workspaceId, serializer);
+          sse_encode_list_prim_u_8_loose(keyring, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 18,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_prim_u_8_strict,
+          decodeErrorData: sse_decode_bridge_error,
+        ),
+        constMeta: kCrateApiSimpleRemoveQuickUnlockMaterialConstMeta,
+        argValues: [workspaceId, keyring],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleRemoveQuickUnlockMaterialConstMeta =>
+      const TaskConstMeta(
+        debugName: "remove_quick_unlock_material",
+        argNames: ["workspaceId", "keyring"],
+      );
+
+  @override
   String crateApiSimpleRevealEntryField({
     required BigInt handleId,
     required String entryId,
@@ -551,7 +743,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_u_64(handleId, serializer);
           sse_encode_String(entryId, serializer);
           sse_encode_sensitive_field(field, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 14)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 19)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_String,
@@ -592,7 +784,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 15,
+            funcId: 20,
             port: port_,
           );
         },
@@ -642,7 +834,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 16,
+            funcId: 21,
             port: port_,
           );
         },
@@ -711,9 +903,27 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<int> dco_decode_list_prim_u_8_loose(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as List<int>;
+  }
+
+  @protected
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as Uint8List;
+  }
+
+  @protected
+  List<QuickUnlockOpened> dco_decode_list_quick_unlock_opened(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_quick_unlock_opened).toList();
+  }
+
+  @protected
+  List<QuickUnlockRequest> dco_decode_list_quick_unlock_request(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_quick_unlock_request).toList();
   }
 
   @protected
@@ -732,6 +942,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   BigInt? dco_decode_opt_box_autoadd_u_64(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_box_autoadd_u_64(raw);
+  }
+
+  @protected
+  Uint8List? dco_decode_opt_list_prim_u_8_strict(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_list_prim_u_8_strict(raw);
   }
 
   @protected
@@ -756,6 +972,55 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     return OtpPreview(
       code: dco_decode_String(arr[0]),
       validForSeconds: dco_decode_opt_box_autoadd_u_64(arr[1]),
+    );
+  }
+
+  @protected
+  QuickUnlockBatchResult dco_decode_quick_unlock_batch_result(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2)
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    return QuickUnlockBatchResult(
+      opened: dco_decode_list_quick_unlock_opened(arr[0]),
+      failedWorkspaceIds: dco_decode_list_String(arr[1]),
+    );
+  }
+
+  @protected
+  QuickUnlockEnrollment dco_decode_quick_unlock_enrollment(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2)
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    return QuickUnlockEnrollment(
+      envelope: dco_decode_list_prim_u_8_strict(arr[0]),
+      updatedKeyring: dco_decode_list_prim_u_8_strict(arr[1]),
+    );
+  }
+
+  @protected
+  QuickUnlockOpened dco_decode_quick_unlock_opened(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2)
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    return QuickUnlockOpened(
+      workspaceId: dco_decode_String(arr[0]),
+      handleId: dco_decode_u_64(arr[1]),
+    );
+  }
+
+  @protected
+  QuickUnlockRequest dco_decode_quick_unlock_request(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    return QuickUnlockRequest(
+      workspaceId: dco_decode_String(arr[0]),
+      path: dco_decode_String(arr[1]),
+      envelope: dco_decode_list_prim_u_8_strict(arr[2]),
     );
   }
 
@@ -914,10 +1179,45 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<int> sse_decode_list_prim_u_8_loose(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var len_ = sse_decode_i_32(deserializer);
+    return deserializer.buffer.getUint8List(len_);
+  }
+
+  @protected
   Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var len_ = sse_decode_i_32(deserializer);
     return deserializer.buffer.getUint8List(len_);
+  }
+
+  @protected
+  List<QuickUnlockOpened> sse_decode_list_quick_unlock_opened(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <QuickUnlockOpened>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_quick_unlock_opened(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<QuickUnlockRequest> sse_decode_list_quick_unlock_request(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <QuickUnlockRequest>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_quick_unlock_request(deserializer));
+    }
+    return ans_;
   }
 
   @protected
@@ -957,6 +1257,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  Uint8List? sse_decode_opt_list_prim_u_8_strict(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_list_prim_u_8_strict(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
   OtpHandle sse_decode_otp_handle(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_id = sse_decode_u_64(deserializer);
@@ -971,6 +1282,60 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_code = sse_decode_String(deserializer);
     var var_validForSeconds = sse_decode_opt_box_autoadd_u_64(deserializer);
     return OtpPreview(code: var_code, validForSeconds: var_validForSeconds);
+  }
+
+  @protected
+  QuickUnlockBatchResult sse_decode_quick_unlock_batch_result(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_opened = sse_decode_list_quick_unlock_opened(deserializer);
+    var var_failedWorkspaceIds = sse_decode_list_String(deserializer);
+    return QuickUnlockBatchResult(
+      opened: var_opened,
+      failedWorkspaceIds: var_failedWorkspaceIds,
+    );
+  }
+
+  @protected
+  QuickUnlockEnrollment sse_decode_quick_unlock_enrollment(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_envelope = sse_decode_list_prim_u_8_strict(deserializer);
+    var var_updatedKeyring = sse_decode_list_prim_u_8_strict(deserializer);
+    return QuickUnlockEnrollment(
+      envelope: var_envelope,
+      updatedKeyring: var_updatedKeyring,
+    );
+  }
+
+  @protected
+  QuickUnlockOpened sse_decode_quick_unlock_opened(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_workspaceId = sse_decode_String(deserializer);
+    var var_handleId = sse_decode_u_64(deserializer);
+    return QuickUnlockOpened(
+      workspaceId: var_workspaceId,
+      handleId: var_handleId,
+    );
+  }
+
+  @protected
+  QuickUnlockRequest sse_decode_quick_unlock_request(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_workspaceId = sse_decode_String(deserializer);
+    var var_path = sse_decode_String(deserializer);
+    var var_envelope = sse_decode_list_prim_u_8_strict(deserializer);
+    return QuickUnlockRequest(
+      workspaceId: var_workspaceId,
+      path: var_path,
+      envelope: var_envelope,
+    );
   }
 
   @protected
@@ -1132,6 +1497,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_list_prim_u_8_loose(
+    List<int> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    serializer.buffer.putUint8List(
+      self is Uint8List ? self : Uint8List.fromList(self),
+    );
+  }
+
+  @protected
   void sse_encode_list_prim_u_8_strict(
     Uint8List self,
     SseSerializer serializer,
@@ -1139,6 +1516,30 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.length, serializer);
     serializer.buffer.putUint8List(self);
+  }
+
+  @protected
+  void sse_encode_list_quick_unlock_opened(
+    List<QuickUnlockOpened> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_quick_unlock_opened(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_quick_unlock_request(
+    List<QuickUnlockRequest> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_quick_unlock_request(item, serializer);
+    }
   }
 
   @protected
@@ -1174,6 +1575,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_opt_list_prim_u_8_strict(
+    Uint8List? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_list_prim_u_8_strict(self, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_otp_handle(OtpHandle self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_u_64(self.id, serializer);
@@ -1186,6 +1600,47 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_String(self.code, serializer);
     sse_encode_opt_box_autoadd_u_64(self.validForSeconds, serializer);
+  }
+
+  @protected
+  void sse_encode_quick_unlock_batch_result(
+    QuickUnlockBatchResult self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_list_quick_unlock_opened(self.opened, serializer);
+    sse_encode_list_String(self.failedWorkspaceIds, serializer);
+  }
+
+  @protected
+  void sse_encode_quick_unlock_enrollment(
+    QuickUnlockEnrollment self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_list_prim_u_8_strict(self.envelope, serializer);
+    sse_encode_list_prim_u_8_strict(self.updatedKeyring, serializer);
+  }
+
+  @protected
+  void sse_encode_quick_unlock_opened(
+    QuickUnlockOpened self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.workspaceId, serializer);
+    sse_encode_u_64(self.handleId, serializer);
+  }
+
+  @protected
+  void sse_encode_quick_unlock_request(
+    QuickUnlockRequest self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.workspaceId, serializer);
+    sse_encode_String(self.path, serializer);
+    sse_encode_list_prim_u_8_strict(self.envelope, serializer);
   }
 
   @protected

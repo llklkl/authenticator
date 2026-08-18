@@ -48,7 +48,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<String> dco_decode_list_String(dynamic raw);
 
   @protected
+  List<int> dco_decode_list_prim_u_8_loose(dynamic raw);
+
+  @protected
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw);
+
+  @protected
+  List<QuickUnlockOpened> dco_decode_list_quick_unlock_opened(dynamic raw);
+
+  @protected
+  List<QuickUnlockRequest> dco_decode_list_quick_unlock_request(dynamic raw);
 
   @protected
   List<VaultEntryView> dco_decode_list_vault_entry_view(dynamic raw);
@@ -60,10 +69,25 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BigInt? dco_decode_opt_box_autoadd_u_64(dynamic raw);
 
   @protected
+  Uint8List? dco_decode_opt_list_prim_u_8_strict(dynamic raw);
+
+  @protected
   OtpHandle dco_decode_otp_handle(dynamic raw);
 
   @protected
   OtpPreview dco_decode_otp_preview(dynamic raw);
+
+  @protected
+  QuickUnlockBatchResult dco_decode_quick_unlock_batch_result(dynamic raw);
+
+  @protected
+  QuickUnlockEnrollment dco_decode_quick_unlock_enrollment(dynamic raw);
+
+  @protected
+  QuickUnlockOpened dco_decode_quick_unlock_opened(dynamic raw);
+
+  @protected
+  QuickUnlockRequest dco_decode_quick_unlock_request(dynamic raw);
 
   @protected
   SensitiveField dco_decode_sensitive_field(dynamic raw);
@@ -122,7 +146,20 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<String> sse_decode_list_String(SseDeserializer deserializer);
 
   @protected
+  List<int> sse_decode_list_prim_u_8_loose(SseDeserializer deserializer);
+
+  @protected
   Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer);
+
+  @protected
+  List<QuickUnlockOpened> sse_decode_list_quick_unlock_opened(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<QuickUnlockRequest> sse_decode_list_quick_unlock_request(
+    SseDeserializer deserializer,
+  );
 
   @protected
   List<VaultEntryView> sse_decode_list_vault_entry_view(
@@ -136,10 +173,33 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BigInt? sse_decode_opt_box_autoadd_u_64(SseDeserializer deserializer);
 
   @protected
+  Uint8List? sse_decode_opt_list_prim_u_8_strict(SseDeserializer deserializer);
+
+  @protected
   OtpHandle sse_decode_otp_handle(SseDeserializer deserializer);
 
   @protected
   OtpPreview sse_decode_otp_preview(SseDeserializer deserializer);
+
+  @protected
+  QuickUnlockBatchResult sse_decode_quick_unlock_batch_result(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  QuickUnlockEnrollment sse_decode_quick_unlock_enrollment(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  QuickUnlockOpened sse_decode_quick_unlock_opened(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  QuickUnlockRequest sse_decode_quick_unlock_request(
+    SseDeserializer deserializer,
+  );
 
   @protected
   SensitiveField sse_decode_sensitive_field(SseDeserializer deserializer);
@@ -199,8 +259,23 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_list_String(List<String> self, SseSerializer serializer);
 
   @protected
+  void sse_encode_list_prim_u_8_loose(List<int> self, SseSerializer serializer);
+
+  @protected
   void sse_encode_list_prim_u_8_strict(
     Uint8List self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_quick_unlock_opened(
+    List<QuickUnlockOpened> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_quick_unlock_request(
+    List<QuickUnlockRequest> self,
     SseSerializer serializer,
   );
 
@@ -217,10 +292,40 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_opt_box_autoadd_u_64(BigInt? self, SseSerializer serializer);
 
   @protected
+  void sse_encode_opt_list_prim_u_8_strict(
+    Uint8List? self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_otp_handle(OtpHandle self, SseSerializer serializer);
 
   @protected
   void sse_encode_otp_preview(OtpPreview self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_quick_unlock_batch_result(
+    QuickUnlockBatchResult self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_quick_unlock_enrollment(
+    QuickUnlockEnrollment self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_quick_unlock_opened(
+    QuickUnlockOpened self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_quick_unlock_request(
+    QuickUnlockRequest self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_sensitive_field(

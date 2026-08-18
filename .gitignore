@@ -25,6 +25,7 @@ Thumbs.db
 *.mobileprovision
 *.jks
 *.keystore
+key.properties
 *.env
 diagnostics/
 

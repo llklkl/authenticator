@@ -11,8 +11,8 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 use crate::{
-    EntrySecretField, KdbxDatabase, KdbxEngine, KdbxEntryRecord, OtpCode, Result, VaultEntry,
-    VaultError,
+    EntrySecretField, KdbxDatabase, KdbxEngine, KdbxEntryRecord, OtpCode, QuickUnlockEnrollment,
+    Result, VaultEntry, VaultError, prepare_quick_unlock, unseal_quick_unlock,
 };
 
 /// An unlocked, file-backed vault. Decrypted contents and the master password stay in Rust.
@@ -67,6 +67,49 @@ impl FileVaultSession {
             baseline_sha256: sha256(&encrypted),
             engine,
         })
+    }
+
+    /// Validate an external KDBX and atomically install it at an app-owned path.
+    /// The source is never modified and an existing destination is never overwritten.
+    pub fn import(
+        source: impl AsRef<Path>,
+        destination: impl AsRef<Path>,
+        password: String,
+    ) -> Result<Self> {
+        let source = source.as_ref();
+        let destination = destination.as_ref().to_path_buf();
+        if destination.exists() {
+            return Err(VaultError::VaultWrite);
+        }
+        let encrypted = Zeroizing::new(fs::read(source).map_err(|_| VaultError::VaultRead)?);
+        let engine = KdbxEngine;
+        let database = engine.open(&encrypted, &password)?;
+        atomic_write(&destination, &encrypted)?;
+        Ok(Self {
+            path: destination,
+            password: Zeroizing::new(password),
+            database,
+            baseline_sha256: sha256(&encrypted),
+            engine,
+        })
+    }
+
+    pub fn open_with_quick_unlock(
+        path: impl AsRef<Path>,
+        workspace_id: Uuid,
+        envelope: &[u8],
+        key: &[u8],
+    ) -> Result<Self> {
+        let password = unseal_quick_unlock(envelope, workspace_id, key)?;
+        Self::open(path, password.to_string())
+    }
+
+    pub fn prepare_quick_unlock(
+        &self,
+        workspace_id: Uuid,
+        existing_keyring: Option<&[u8]>,
+    ) -> Result<QuickUnlockEnrollment> {
+        prepare_quick_unlock(&self.password, workspace_id, existing_keyring)
     }
 
     pub fn entries(&self) -> Vec<KdbxEntryRecord> {
@@ -310,5 +353,24 @@ mod tests {
         let before = fs::read(&first_path).unwrap();
         assert!(first.install_synced_snapshot(b"not a kdbx").is_err());
         assert_eq!(fs::read(&first_path).unwrap(), before);
+    }
+
+    #[test]
+    fn imports_only_after_validation_without_overwriting_destination() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("source.kdbx");
+        let destination = directory.path().join("internal").join("imported.kdbx");
+        FileVaultSession::create(&source, "Imported", "master password".into()).unwrap();
+
+        assert!(FileVaultSession::import(&source, &destination, "wrong".into()).is_err());
+        assert!(!destination.exists());
+        let imported =
+            FileVaultSession::import(&source, &destination, "master password".into()).unwrap();
+        assert!(imported.entries().is_empty());
+        assert!(destination.exists());
+        assert!(matches!(
+            FileVaultSession::import(&source, &destination, "master password".into()),
+            Err(VaultError::VaultWrite)
+        ));
     }
 }

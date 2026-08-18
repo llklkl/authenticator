@@ -16,3 +16,8 @@ Google Authenticator migration payloads support SHA-1, SHA-256, SHA-512,
 six/eight digits, HOTP, TOTP, and multiple OTP parameters in a single payload.
 Multi-QR batch collection is not yet implemented; each supplied migration URI
 is imported as its own atomic KDBX transaction.
+
+Android builds use application ID `top.llklkl.authenticatorvault`, require API
+24 or newer, and use `BIOMETRIC_STRONG` without device-credential fallback.
+Quick-unlock envelopes and sealed keyrings are independently versioned; unknown
+versions fail closed and the KDBX remains unlockable with its master password.

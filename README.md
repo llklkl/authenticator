@@ -19,9 +19,15 @@ The current offline alpha includes:
 - On-demand WebDAV sync with credentials retained only for the active request.
 - A responsive Flutter interface for arbitrary independent workspaces, timed
   clipboard clearing, lifecycle locking, and cross-platform KDBX file picking.
+- Android strong-biometric quick unlock for explicitly selected workspaces,
+  backed by Android Keystore with enrollment invalidation and no device-PIN
+  fallback.
+- Configurable background auto-lock, immediate screen-off locking, privacy
+  overlay, screenshot blocking while sensitive content is active, and disabled
+  Android backups.
 
-Biometric quick unlock, camera/image QR decoding, platform autofill, browser
-companion extensions, and attachment support remain under active development.
+Camera/image QR decoding, platform autofill, browser companion extensions, and
+attachment support remain under active development.
 
 ## Architecture
 

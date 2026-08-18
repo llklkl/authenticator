@@ -9,7 +9,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `ensure_path_available`, `get_vault`, `insert_vault_session`, `into_entry`, `parse_uuid`, `path_identity`, `read_vault_sessions`, `with_vault_mut`, `write_vault_sessions`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `OtpSessions`, `SessionVaultMerger`, `VaultSessions`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `merge`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `merge`
 // These functions are ignored (category: IgnoreBecauseOwnerTyShouldIgnore): `default`, `default`
 
 /// Create and unlock a new KDBX workspace. Existing files are never overwritten.
@@ -30,6 +30,51 @@ Future<VaultHandle> openVault({
 }) => RustLib.instance.api.crateApiSimpleOpenVault(
   path: path,
   masterPassword: masterPassword,
+);
+
+/// Return a cryptographically random stable workspace identifier.
+String generateWorkspaceId() =>
+    RustLib.instance.api.crateApiSimpleGenerateWorkspaceId();
+
+/// Validate and copy an external vault into app-owned storage before opening it.
+Future<VaultHandle> importVault({
+  required String sourcePath,
+  required String destinationPath,
+  required String name,
+  required String masterPassword,
+}) => RustLib.instance.api.crateApiSimpleImportVault(
+  sourcePath: sourcePath,
+  destinationPath: destinationPath,
+  name: name,
+  masterPassword: masterPassword,
+);
+
+Future<QuickUnlockEnrollment> prepareQuickUnlockEnrollment({
+  required BigInt handleId,
+  required String workspaceId,
+  Uint8List? existingKeyring,
+}) => RustLib.instance.api.crateApiSimplePrepareQuickUnlockEnrollment(
+  handleId: handleId,
+  workspaceId: workspaceId,
+  existingKeyring: existingKeyring,
+);
+
+Future<Uint8List> removeQuickUnlockMaterial({
+  required String workspaceId,
+  required List<int> keyring,
+}) => RustLib.instance.api.crateApiSimpleRemoveQuickUnlockMaterial(
+  workspaceId: workspaceId,
+  keyring: keyring,
+);
+
+/// Unlock multiple independent workspaces after one platform biometric prompt.
+/// Individual failures are isolated and reported without exposing their cause.
+Future<QuickUnlockBatchResult> openVaultsWithQuickUnlock({
+  required List<QuickUnlockRequest> requests,
+  required List<int> keyring,
+}) => RustLib.instance.api.crateApiSimpleOpenVaultsWithQuickUnlock(
+  requests: requests,
+  keyring: keyring,
 );
 
 void closeVault({required BigInt handleId}) =>
@@ -141,6 +186,7 @@ enum BridgeError {
   fileWrite,
   sessionUnavailable,
   syncFailed,
+  quickUnlockFailed,
 }
 
 class OtpHandle {
@@ -183,6 +229,90 @@ class OtpPreview {
           runtimeType == other.runtimeType &&
           code == other.code &&
           validForSeconds == other.validForSeconds;
+}
+
+class QuickUnlockBatchResult {
+  final List<QuickUnlockOpened> opened;
+  final List<String> failedWorkspaceIds;
+
+  const QuickUnlockBatchResult({
+    required this.opened,
+    required this.failedWorkspaceIds,
+  });
+
+  @override
+  int get hashCode => opened.hashCode ^ failedWorkspaceIds.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is QuickUnlockBatchResult &&
+          runtimeType == other.runtimeType &&
+          opened == other.opened &&
+          failedWorkspaceIds == other.failedWorkspaceIds;
+}
+
+class QuickUnlockEnrollment {
+  final Uint8List envelope;
+  final Uint8List updatedKeyring;
+
+  const QuickUnlockEnrollment({
+    required this.envelope,
+    required this.updatedKeyring,
+  });
+
+  @override
+  int get hashCode => envelope.hashCode ^ updatedKeyring.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is QuickUnlockEnrollment &&
+          runtimeType == other.runtimeType &&
+          envelope == other.envelope &&
+          updatedKeyring == other.updatedKeyring;
+}
+
+class QuickUnlockOpened {
+  final String workspaceId;
+  final BigInt handleId;
+
+  const QuickUnlockOpened({required this.workspaceId, required this.handleId});
+
+  @override
+  int get hashCode => workspaceId.hashCode ^ handleId.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is QuickUnlockOpened &&
+          runtimeType == other.runtimeType &&
+          workspaceId == other.workspaceId &&
+          handleId == other.handleId;
+}
+
+class QuickUnlockRequest {
+  final String workspaceId;
+  final String path;
+  final Uint8List envelope;
+
+  const QuickUnlockRequest({
+    required this.workspaceId,
+    required this.path,
+    required this.envelope,
+  });
+
+  @override
+  int get hashCode => workspaceId.hashCode ^ path.hashCode ^ envelope.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is QuickUnlockRequest &&
+          runtimeType == other.runtimeType &&
+          workspaceId == other.workspaceId &&
+          path == other.path &&
+          envelope == other.envelope;
 }
 
 enum SensitiveField { password, notes }

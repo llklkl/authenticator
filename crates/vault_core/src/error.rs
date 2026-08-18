@@ -43,4 +43,6 @@ pub enum VaultError {
     FieldUnavailable,
     #[error("the vault file is already open")]
     VaultAlreadyOpen,
+    #[error("quick unlock material is invalid or unavailable")]
+    QuickUnlock,
 }

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:authenticator_vault/src/features/security/platform_security_service.dart';
 import 'package:authenticator_vault/src/features/vault/vault_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -23,8 +24,17 @@ class _VaultHomePageState extends State<VaultHomePage>
   String? _selectedId;
   String _query = '';
   bool _loading = true;
+  bool _privacyOverlay = false;
+  Object? _loadError;
   Timer? _ticker;
-  Timer? _backgroundLock;
+  Stopwatch? _backgroundElapsed;
+  StreamSubscription<void>? _screenOffSubscription;
+  late final SecurityCoordinator _securityCoordinator;
+
+  SecurityVaultService? get _securityService =>
+      widget.vaultService is SecurityVaultService
+      ? widget.vaultService as SecurityVaultService
+      : null;
 
   WorkspaceInfo? get _selected =>
       _workspaces.where((workspace) => workspace.id == _selectedId).firstOrNull;
@@ -36,7 +46,12 @@ class _VaultHomePageState extends State<VaultHomePage>
   @override
   void initState() {
     super.initState();
+    _securityCoordinator = SecurityCoordinator(
+      _securityService?.platformSecurity ?? const NoopPlatformSecurityService(),
+    );
     WidgetsBinding.instance.addObserver(this);
+    _screenOffSubscription = _securityService?.platformSecurity.screenOffEvents
+        .listen((_) => unawaited(_lockAll()));
     unawaited(_loadWorkspaces());
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) => _refreshOtp());
   }
@@ -46,37 +61,65 @@ class _VaultHomePageState extends State<VaultHomePage>
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.hidden ||
         state == AppLifecycleState.detached) {
-      _backgroundLock?.cancel();
-      _backgroundLock = Timer(const Duration(minutes: 5), _lockAll);
+      _backgroundElapsed ??= Stopwatch()..start();
+      if (mounted) setState(() => _privacyOverlay = true);
+      unawaited(_securityCoordinator.setBackgrounded(true));
     } else if (state == AppLifecycleState.resumed) {
-      _backgroundLock?.cancel();
-      _backgroundLock = null;
+      unawaited(_resumeFromBackground());
     }
+  }
+
+  Future<void> _resumeFromBackground() async {
+    final elapsed = _backgroundElapsed?.elapsed ?? Duration.zero;
+    _backgroundElapsed?.stop();
+    _backgroundElapsed = null;
+    final timeout = _securityService?.autoLockSeconds ?? 300;
+    if (shouldAutoLock(
+      hasUnlockedWorkspaces: _handles.isNotEmpty,
+      backgroundElapsed: elapsed,
+      timeoutSeconds: timeout,
+    )) {
+      await _lockAll();
+    }
+    await _securityCoordinator.setBackgrounded(false);
+    if (mounted) setState(() => _privacyOverlay = false);
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _ticker?.cancel();
-    _backgroundLock?.cancel();
+    unawaited(_screenOffSubscription?.cancel());
     _searchController.dispose();
     unawaited(widget.vaultService.lockAll());
     super.dispose();
   }
 
   Future<void> _loadWorkspaces() async {
-    final workspaces = await widget.vaultService.loadWorkspaces();
-    if (!mounted) return;
-    setState(() {
-      _workspaces = workspaces;
-      _selectedId = workspaces.firstOrNull?.id;
-      _loading = false;
-    });
+    try {
+      final workspaces = await widget.vaultService.loadWorkspaces();
+      if (!mounted) return;
+      setState(() {
+        _workspaces = workspaces;
+        _selectedId = workspaces.firstOrNull?.id;
+        _loading = false;
+      });
+    } on Object catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _loadError = error;
+        _loading = false;
+      });
+    }
   }
 
+  Future<T?> _sensitiveDialog<T>({required WidgetBuilder builder}) =>
+      _securityCoordinator.sensitive(
+        () => showDialog<T>(context: context, builder: builder),
+      );
+
   Future<void> _createWorkspace() async {
-    final request = await showDialog<_CreateWorkspaceRequest>(
-      context: context,
+    final request = await _sensitiveDialog<_CreateWorkspaceRequest>(
       builder: (_) => const _CreateWorkspaceDialog(),
     );
     if (request == null || !mounted) return;
@@ -91,14 +134,14 @@ class _VaultHomePageState extends State<VaultHomePage>
         _handles[unlocked.workspace.id] = unlocked.handleId;
         _entries[unlocked.workspace.id] = [];
       });
+      await _securityCoordinator.setUnlockedCount(_handles.length);
     }, success: 'Workspace 已创建，本地文件使用 KDBX 4.1 加密。');
   }
 
   Future<void> _importWorkspace() async {
     final selectedPath = await widget.vaultService.chooseKdbxFile();
     if (selectedPath == null || !mounted) return;
-    final request = await showDialog<_ImportWorkspaceRequest>(
-      context: context,
+    final request = await _sensitiveDialog<_ImportWorkspaceRequest>(
       builder: (_) => _ImportWorkspaceDialog(initialPath: selectedPath),
     );
     if (request == null || !mounted) return;
@@ -115,6 +158,7 @@ class _VaultHomePageState extends State<VaultHomePage>
         _handles[unlocked.workspace.id] = unlocked.handleId;
         _entries[unlocked.workspace.id] = entries;
       });
+      await _securityCoordinator.setUnlockedCount(_handles.length);
       await _refreshOtp();
     }, success: 'KDBX Workspace 已导入。');
   }
@@ -122,8 +166,7 @@ class _VaultHomePageState extends State<VaultHomePage>
   Future<void> _unlock() async {
     final workspace = _selected;
     if (workspace == null) return;
-    final password = await showDialog<String>(
-      context: context,
+    final password = await _sensitiveDialog<String>(
       builder: (_) => _PasswordDialog(workspaceName: workspace.name),
     );
     if (password == null || !mounted) return;
@@ -134,6 +177,7 @@ class _VaultHomePageState extends State<VaultHomePage>
         _handles[workspace.id] = handle;
         _entries[workspace.id] = entries;
       });
+      await _securityCoordinator.setUnlockedCount(_handles.length);
       await _refreshOtp();
     });
   }
@@ -146,6 +190,7 @@ class _VaultHomePageState extends State<VaultHomePage>
       _entries.clear();
       _codes.clear();
     });
+    await _securityCoordinator.setUnlockedCount(0);
   }
 
   Future<void> _refreshEntries() async {
@@ -187,8 +232,7 @@ class _VaultHomePageState extends State<VaultHomePage>
   Future<void> _addEntry([EntryType initialType = EntryType.login]) async {
     final handle = _selectedHandle;
     if (handle == null) return;
-    final draft = await showDialog<VaultEntryDraft>(
-      context: context,
+    final draft = await _sensitiveDialog<VaultEntryDraft>(
       builder: (_) => _EntryEditorDialog(initialType: initialType),
     );
     if (draft == null || !mounted) return;
@@ -201,8 +245,7 @@ class _VaultHomePageState extends State<VaultHomePage>
   Future<void> _importOtp() async {
     final handle = _selectedHandle;
     if (handle == null) return;
-    final uri = await showDialog<String>(
-      context: context,
+    final uri = await _sensitiveDialog<String>(
       builder: (_) => const _OtpImportDialog(),
     );
     if (uri == null || !mounted) return;
@@ -216,8 +259,7 @@ class _VaultHomePageState extends State<VaultHomePage>
     final handle = _selectedHandle;
     final workspace = _selected;
     if (handle == null || workspace == null) return;
-    final settings = await showDialog<WebDavSettings>(
-      context: context,
+    final settings = await _sensitiveDialog<WebDavSettings>(
       builder: (_) => const _WebDavDialog(),
     );
     if (settings == null || !mounted) return;
@@ -255,8 +297,7 @@ class _VaultHomePageState extends State<VaultHomePage>
       // Imported databases may omit one of the standard protected fields.
     }
     if (!mounted) return;
-    final draft = await showDialog<VaultEntryDraft>(
-      context: context,
+    final draft = await _sensitiveDialog<VaultEntryDraft>(
       builder: (_) => _EntryEditorDialog(
         initialType: item.type,
         initial: VaultEntryDraft(
@@ -281,8 +322,7 @@ class _VaultHomePageState extends State<VaultHomePage>
   Future<void> _deleteEntry(VaultEntryItem item) async {
     final handle = _selectedHandle;
     if (handle == null) return;
-    final confirmed = await showDialog<bool>(
-      context: context,
+    final confirmed = await _sensitiveDialog<bool>(
       builder: (context) => AlertDialog(
         title: const Text('删除条目？'),
         content: Text('“${item.title}”会从 Vault 删除，并写入 KDBX 删除记录。'),
@@ -314,8 +354,7 @@ class _VaultHomePageState extends State<VaultHomePage>
           ? await widget.vaultService.revealNotes(handle, item.id)
           : await widget.vaultService.revealPassword(handle, item.id);
       if (!mounted) return;
-      await showDialog<void>(
-        context: context,
+      await _sensitiveDialog<void>(
         builder: (context) => AlertDialog(
           title: Text(notes ? '受保护内容' : '密码'),
           content: SelectableText(value.isEmpty ? '（空）' : value),
@@ -346,6 +385,87 @@ class _VaultHomePageState extends State<VaultHomePage>
     );
   }
 
+  Future<void> _quickUnlock() async {
+    final service = _securityService;
+    final current = _selected;
+    if (service == null || current == null) return;
+    final available = _workspaces
+        .where((item) {
+          return item.quickUnlockEnabled && !_handles.containsKey(item.id);
+        })
+        .toList(growable: false);
+    if (available.isEmpty) return;
+    final selected = await _sensitiveDialog<List<WorkspaceInfo>>(
+      builder: (_) => _QuickUnlockSelectionDialog(
+        workspaces: available,
+        initiallySelectedId: current.id,
+      ),
+    );
+    if (selected == null || selected.isEmpty || !mounted) return;
+    await _guarded(() async {
+      final outcome = await service.quickUnlock(selected);
+      final entryLists = await Future.wait(
+        outcome.opened.map((item) async {
+          return MapEntry(
+            item.workspace.id,
+            await widget.vaultService.listEntries(item.handleId),
+          );
+        }),
+      );
+      if (!mounted) return;
+      setState(() {
+        for (final unlocked in outcome.opened) {
+          _handles[unlocked.workspace.id] = unlocked.handleId;
+        }
+        for (final entries in entryLists) {
+          _entries[entries.key] = entries.value;
+        }
+      });
+      await _securityCoordinator.setUnlockedCount(_handles.length);
+      await _refreshOtp();
+      if (outcome.failedIds.isNotEmpty && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${outcome.failedIds.length} 个 Workspace 解锁失败。'),
+          ),
+        );
+      }
+    });
+  }
+
+  Future<void> _showSecuritySettings() async {
+    final service = _securityService;
+    final workspace = _selected;
+    if (service == null || workspace == null) return;
+    final result = await _sensitiveDialog<_SecuritySettingsResult>(
+      builder: (_) => _SecuritySettingsDialog(
+        workspace: workspace,
+        unlocked: _selectedHandle != null,
+        initialAutoLockSeconds: service.autoLockSeconds,
+      ),
+    );
+    if (result == null || !mounted) return;
+    await _guarded(() async {
+      await service.setAutoLockSeconds(result.autoLockSeconds);
+      var updated = _workspaces;
+      if (result.quickUnlockEnabled != workspace.quickUnlockEnabled) {
+        if (result.quickUnlockEnabled) {
+          if (!await service.canQuickUnlock()) {
+            throw const PlatformSecurityFailure('notAvailable');
+          }
+          final handle = _selectedHandle;
+          if (handle == null) throw StateError('workspace locked');
+          updated = await service.enableQuickUnlock(
+            UnlockedWorkspace(workspace: workspace, handleId: handle),
+          );
+        } else {
+          updated = await service.disableQuickUnlock(workspace);
+        }
+      }
+      if (mounted) setState(() => _workspaces = updated);
+    }, success: '安全设置已更新。');
+  }
+
   Future<void> _guarded(
     Future<void> Function() operation, {
     String? success,
@@ -369,10 +489,28 @@ class _VaultHomePageState extends State<VaultHomePage>
     if (_loading) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
+    if (_loadError != null) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Authenticator Vault')),
+        body: const Center(
+          child: Padding(
+            padding: EdgeInsets.all(32),
+            child: Text('Workspace 注册表损坏或版本不受支持。原文件未被覆盖，请从备份恢复。'),
+          ),
+        ),
+      );
+    }
     return Scaffold(
       appBar: AppBar(
         title: const Text('Authenticator Vault'),
         actions: [
+          IconButton(
+            onPressed: _securityService == null || _selected == null
+                ? null
+                : _showSecuritySettings,
+            tooltip: '安全设置',
+            icon: const Icon(Icons.security_outlined),
+          ),
           IconButton(
             onPressed: _handles.isEmpty ? null : _lockAll,
             tooltip: '锁定全部 Workspace',
@@ -381,20 +519,31 @@ class _VaultHomePageState extends State<VaultHomePage>
           const SizedBox(width: 8),
         ],
       ),
-      body: LayoutBuilder(
-        builder: (context, constraints) {
-          if (_workspaces.isEmpty) return _buildWelcome();
-          if (constraints.maxWidth >= 800) {
-            return Row(
-              children: [
-                _buildRail(),
-                const VerticalDivider(width: 1),
-                Expanded(child: _buildWorkspace()),
-              ],
-            );
-          }
-          return _buildWorkspace(showPicker: true);
-        },
+      body: Stack(
+        children: [
+          LayoutBuilder(
+            builder: (context, constraints) {
+              if (_workspaces.isEmpty) return _buildWelcome();
+              if (constraints.maxWidth >= 800) {
+                return Row(
+                  children: [
+                    _buildRail(),
+                    const VerticalDivider(width: 1),
+                    Expanded(child: _buildWorkspace()),
+                  ],
+                );
+              }
+              return _buildWorkspace(showPicker: true);
+            },
+          ),
+          if (_privacyOverlay)
+            const Positioned.fill(
+              child: ColoredBox(
+                color: Color(0xfff7f8fa),
+                child: Center(child: Icon(Icons.shield, size: 72)),
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -506,6 +655,9 @@ class _VaultHomePageState extends State<VaultHomePage>
                 child: _LockedWorkspace(
                   workspace: workspace,
                   onUnlock: _unlock,
+                  onQuickUnlock: workspace.quickUnlockEnabled
+                      ? _quickUnlock
+                      : null,
                 ),
               )
             else ...[
@@ -663,10 +815,15 @@ class _VaultHomePageState extends State<VaultHomePage>
 }
 
 class _LockedWorkspace extends StatelessWidget {
-  const _LockedWorkspace({required this.workspace, required this.onUnlock});
+  const _LockedWorkspace({
+    required this.workspace,
+    required this.onUnlock,
+    this.onQuickUnlock,
+  });
 
   final WorkspaceInfo workspace;
   final VoidCallback onUnlock;
+  final VoidCallback? onQuickUnlock;
 
   @override
   Widget build(BuildContext context) => Center(
@@ -687,8 +844,165 @@ class _LockedWorkspace extends StatelessWidget {
           icon: const Icon(Icons.lock_open),
           label: const Text('解锁'),
         ),
+        if (onQuickUnlock != null) ...[
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: onQuickUnlock,
+            icon: const Icon(Icons.fingerprint),
+            label: const Text('生物识别快速解锁'),
+          ),
+        ],
       ],
     ),
+  );
+}
+
+class _SecuritySettingsResult {
+  const _SecuritySettingsResult({
+    required this.autoLockSeconds,
+    required this.quickUnlockEnabled,
+  });
+  final int autoLockSeconds;
+  final bool quickUnlockEnabled;
+}
+
+class _SecuritySettingsDialog extends StatefulWidget {
+  const _SecuritySettingsDialog({
+    required this.workspace,
+    required this.unlocked,
+    required this.initialAutoLockSeconds,
+  });
+  final WorkspaceInfo workspace;
+  final bool unlocked;
+  final int initialAutoLockSeconds;
+
+  @override
+  State<_SecuritySettingsDialog> createState() =>
+      _SecuritySettingsDialogState();
+}
+
+class _SecuritySettingsDialogState extends State<_SecuritySettingsDialog> {
+  late int timeout = widget.initialAutoLockSeconds;
+  late bool quickUnlock = widget.workspace.quickUnlockEnabled;
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('安全设置'),
+    content: SizedBox(
+      width: 460,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          DropdownButtonFormField<int>(
+            initialValue: timeout,
+            decoration: const InputDecoration(labelText: '进入后台后自动锁定'),
+            items: const [
+              DropdownMenuItem(value: 0, child: Text('立即')),
+              DropdownMenuItem(value: 30, child: Text('30 秒')),
+              DropdownMenuItem(value: 60, child: Text('1 分钟')),
+              DropdownMenuItem(value: 300, child: Text('5 分钟（默认）')),
+              DropdownMenuItem(value: 900, child: Text('15 分钟')),
+            ],
+            onChanged: (value) => setState(() => timeout = value!),
+          ),
+          const SizedBox(height: 12),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('强生物识别快速解锁'),
+            subtitle: Text(
+              widget.unlocked
+                  ? '默认关闭；密钥仅由 Android Keystore 解封。'
+                  : '请先使用主密码解锁此 Workspace。',
+            ),
+            value: quickUnlock,
+            onChanged: widget.unlocked || quickUnlock
+                ? (value) => setState(() => quickUnlock = value)
+                : null,
+          ),
+        ],
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('取消'),
+      ),
+      FilledButton(
+        onPressed: () => Navigator.pop(
+          context,
+          _SecuritySettingsResult(
+            autoLockSeconds: timeout,
+            quickUnlockEnabled: quickUnlock,
+          ),
+        ),
+        child: const Text('保存'),
+      ),
+    ],
+  );
+}
+
+class _QuickUnlockSelectionDialog extends StatefulWidget {
+  const _QuickUnlockSelectionDialog({
+    required this.workspaces,
+    required this.initiallySelectedId,
+  });
+  final List<WorkspaceInfo> workspaces;
+  final String initiallySelectedId;
+
+  @override
+  State<_QuickUnlockSelectionDialog> createState() =>
+      _QuickUnlockSelectionDialogState();
+}
+
+class _QuickUnlockSelectionDialogState
+    extends State<_QuickUnlockSelectionDialog> {
+  late final selected = <String>{
+    if (widget.workspaces.any((item) => item.id == widget.initiallySelectedId))
+      widget.initiallySelectedId
+    else
+      widget.workspaces.first.id,
+  };
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('选择要快速解锁的 Workspace'),
+    content: SizedBox(
+      width: 440,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (final workspace in widget.workspaces)
+            CheckboxListTile(
+              value: selected.contains(workspace.id),
+              title: Text(workspace.name),
+              onChanged: (value) => setState(() {
+                if (value ?? false) {
+                  selected.add(workspace.id);
+                } else {
+                  selected.remove(workspace.id);
+                }
+              }),
+            ),
+        ],
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('取消'),
+      ),
+      FilledButton(
+        onPressed: selected.isEmpty
+            ? null
+            : () => Navigator.pop(
+                context,
+                widget.workspaces
+                    .where((item) => selected.contains(item.id))
+                    .toList(growable: false),
+              ),
+        child: const Text('验证并解锁'),
+      ),
+    ],
   );
 }
 
@@ -737,12 +1051,16 @@ class _CreateWorkspaceDialogState extends State<_CreateWorkspaceDialog> {
           TextField(
             controller: password,
             obscureText: true,
+            autocorrect: false,
+            enableSuggestions: false,
             decoration: const InputDecoration(labelText: '主密码（至少 12 个字符）'),
           ),
           const SizedBox(height: 12),
           TextField(
             controller: confirm,
             obscureText: true,
+            autocorrect: false,
+            enableSuggestions: false,
             decoration: InputDecoration(labelText: '确认主密码', errorText: error),
           ),
         ],
@@ -821,6 +1139,8 @@ class _ImportWorkspaceDialogState extends State<_ImportWorkspaceDialog> {
           TextField(
             controller: password,
             obscureText: true,
+            autocorrect: false,
+            enableSuggestions: false,
             decoration: const InputDecoration(labelText: '主密码'),
           ),
         ],
@@ -869,6 +1189,8 @@ class _PasswordDialogState extends State<_PasswordDialog> {
       controller: controller,
       autofocus: true,
       obscureText: true,
+      autocorrect: false,
+      enableSuggestions: false,
       onSubmitted: (value) => Navigator.pop(context, value),
       decoration: const InputDecoration(labelText: '主密码'),
     ),
@@ -938,6 +1260,8 @@ class _WebDavDialogState extends State<_WebDavDialog> {
           TextField(
             controller: password,
             obscureText: true,
+            autocorrect: false,
+            enableSuggestions: false,
             decoration: const InputDecoration(labelText: 'WebDAV 密码'),
           ),
           CheckboxListTile(
@@ -1088,6 +1412,8 @@ class _EntryEditorDialogState extends State<_EntryEditorDialog> {
                 TextField(
                   controller: password,
                   obscureText: true,
+                  autocorrect: false,
+                  enableSuggestions: false,
                   decoration: const InputDecoration(labelText: '密码'),
                 ),
                 const SizedBox(height: 12),
