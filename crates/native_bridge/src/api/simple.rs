@@ -481,6 +481,19 @@ pub fn create_group(
         .map(|id| id.to_string())
 }
 
+pub fn create_group_with_icon(
+    handle_id: u64,
+    parent_id: String,
+    name: String,
+    built_in_icon_id: Option<u32>,
+) -> Result<String, BridgeError> {
+    let parent_id = parse_uuid(&parent_id)?;
+    with_vault_mut(handle_id, |session| {
+        session.create_group_with_icon(parent_id, &name, built_in_icon_id)
+    })
+    .map(|id| id.to_string())
+}
+
 pub fn rename_group(handle_id: u64, group_id: String, name: String) -> Result<(), BridgeError> {
     let group_id = parse_uuid(&group_id)?;
     with_vault_mut(handle_id, |session| session.rename_group(group_id, &name))

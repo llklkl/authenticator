@@ -199,25 +199,22 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
               const VerticalDivider(width: 1),
               Expanded(
-                child: Stack(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    SingleChildScrollView(
-                      padding: const EdgeInsets.all(28),
-                      child: Align(
-                        alignment: Alignment.topLeft,
-                        child: ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 760),
-                          child: _sectionBody(),
+                    if (busy) const LinearProgressIndicator(),
+                    Expanded(
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.fromLTRB(28, 24, 28, 28),
+                        child: Align(
+                          alignment: Alignment.topLeft,
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 760),
+                            child: _sectionBody(),
+                          ),
                         ),
                       ),
                     ),
-                    if (busy)
-                      const Positioned(
-                        left: 0,
-                        right: 0,
-                        top: 0,
-                        child: LinearProgressIndicator(),
-                      ),
                   ],
                 ),
               ),

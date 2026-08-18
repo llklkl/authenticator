@@ -263,9 +263,20 @@ impl KdbxEngine {
         parent_id: Uuid,
         name: &str,
     ) -> Result<Uuid> {
+        self.create_group_with_icon(database, parent_id, name, None)
+    }
+
+    pub fn create_group_with_icon(
+        &self,
+        database: &mut KdbxDatabase,
+        parent_id: Uuid,
+        name: &str,
+        icon_id: Option<u32>,
+    ) -> Result<Uuid> {
         if name.trim().is_empty() {
             return Err(VaultError::InvalidKdbx);
         }
+        validate_builtin_icon(icon_id)?;
         let parent_id = GroupId::from_uuid(parent_id);
         if is_group_in_recycle_bin(&database.inner, parent_id) {
             return Err(VaultError::InvalidVaultMove);
@@ -276,6 +287,9 @@ impl KdbxEngine {
             .ok_or(VaultError::GroupNotFound)?;
         let mut group = parent.add_group();
         group.name = name.trim().to_owned();
+        if let Some(icon_id) = icon_id {
+            group.set_icon_builtin(icon_id as usize);
+        }
         group.times.last_modification = Some(Times::now());
         Ok(group.id().uuid())
     }
@@ -305,9 +319,7 @@ impl KdbxEngine {
         group_id: Uuid,
         icon_id: Option<u32>,
     ) -> Result<()> {
-        if icon_id.is_some_and(|value| value > 68) {
-            return Err(VaultError::InvalidVaultIcon);
-        }
+        validate_builtin_icon(icon_id)?;
         let group_id = GroupId::from_uuid(group_id);
         reject_protected_group(&database.inner, group_id)?;
         let mut group = database
@@ -814,6 +826,14 @@ fn icon_record(icon: Option<&Icon>) -> KdbxIconRecord {
     }
 }
 
+fn validate_builtin_icon(icon_id: Option<u32>) -> Result<()> {
+    if icon_id.is_some_and(|value| value > 68) {
+        Err(VaultError::InvalidVaultIcon)
+    } else {
+        Ok(())
+    }
+}
+
 fn validate_attachment_name(name: &str) -> Result<()> {
     let trimmed = name.trim();
     if trimmed.is_empty()
@@ -1154,16 +1174,13 @@ mod tests {
         let mut database = engine.create("Personal").unwrap();
         let root_id = database.inner.root().id().uuid();
         let group_id = engine
-            .create_group(&mut database, root_id, "Servers")
+            .create_group_with_icon(&mut database, root_id, "Servers", Some(3))
             .unwrap();
         let entry = sample_entry();
         engine
             .add_entry_to_group(&mut database, group_id, &entry)
             .unwrap();
 
-        engine
-            .set_group_icon(&mut database, group_id, Some(3))
-            .unwrap();
         engine
             .set_entry_favorite(&mut database, entry.id, true)
             .unwrap();

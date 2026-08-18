@@ -51,30 +51,37 @@ class DesktopTitleBar extends StatelessWidget {
           color: colors.surfaceContainerLow,
           child: SizedBox(
             height: _desktopWindowChromeEnabled && !compact ? 44 : 52,
-            child: Row(
-              children: [
-                if (compact) Expanded(child: leading) else leading,
-                if (!compact && _desktopWindowChromeEnabled)
-                  Expanded(
-                    child: DragToMoveArea(
-                      child: Center(
+            child: compact
+                ? Row(
+                    children: [
+                      Expanded(child: leading),
+                      ...actions,
+                      const SizedBox(width: 4),
+                    ],
+                  )
+                : Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      if (_desktopWindowChromeEnabled)
+                        const DragToMoveArea(child: SizedBox.expand()),
+                      Row(
+                        children: [
+                          leading,
+                          const Spacer(),
+                          ...actions,
+                          if (_desktopWindowChromeEnabled)
+                            const _WindowButtons(),
+                          const SizedBox(width: 4),
+                        ],
+                      ),
+                      Center(
                         child: ConstrainedBox(
                           constraints: const BoxConstraints(maxWidth: 440),
                           child: search,
                         ),
                       ),
-                    ),
-                  )
-                else if (!compact) ...[
-                  const Spacer(),
-                  SizedBox(width: 160, child: search),
-                ],
-                ...actions,
-                if (!compact && _desktopWindowChromeEnabled)
-                  const _WindowButtons(),
-                const SizedBox(width: 4),
-              ],
-            ),
+                    ],
+                  ),
           ),
         );
       },

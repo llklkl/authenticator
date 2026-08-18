@@ -817,10 +817,18 @@ class _VaultHomePageState extends State<VaultHomePage>
     final structured = _structuredService;
     final parent = parentId ?? _selectedGroupId;
     if (handle == null || structured == null || parent == null) return;
-    final name = await _askName('新建文件夹');
-    if (name == null || name.isEmpty || !mounted) return;
+    final request = await showDialog<_CreateFolderRequest>(
+      context: context,
+      builder: (_) => const _CreateFolderDialog(),
+    );
+    if (request == null || !mounted) return;
     await _guarded(() async {
-      final id = await structured.createGroup(handle, parent, name);
+      final id = await structured.createGroup(
+        handle,
+        parent,
+        request.name,
+        iconId: request.iconId,
+      );
       await _refreshEntries();
       _selectGroup(id);
     });
@@ -2155,6 +2163,114 @@ IconData _keepassIcon(int id) {
     Icons.bolt,
   ];
   return icons[id % icons.length];
+}
+
+class _CreateFolderRequest {
+  const _CreateFolderRequest({required this.name, required this.iconId});
+  final String name;
+  final int? iconId;
+}
+
+class _CreateFolderDialog extends StatefulWidget {
+  const _CreateFolderDialog();
+
+  @override
+  State<_CreateFolderDialog> createState() => _CreateFolderDialogState();
+}
+
+class _CreateFolderDialogState extends State<_CreateFolderDialog> {
+  final name = TextEditingController();
+  int? iconId;
+
+  @override
+  void dispose() {
+    name.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final value = name.text.trim();
+    if (value.isEmpty) return;
+    Navigator.pop(context, _CreateFolderRequest(name: value, iconId: iconId));
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('新建文件夹'),
+    content: SizedBox(
+      width: 470,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          TextField(
+            controller: name,
+            autofocus: true,
+            decoration: const InputDecoration(labelText: '名称'),
+            onSubmitted: (_) => _submit(),
+          ),
+          const SizedBox(height: 18),
+          Text('图标', style: Theme.of(context).textTheme.labelLarge),
+          const SizedBox(height: 8),
+          SizedBox(
+            height: 164,
+            child: GridView.count(
+              crossAxisCount: 8,
+              mainAxisSpacing: 8,
+              crossAxisSpacing: 8,
+              children: [
+                _iconChoice(
+                  value: null,
+                  icon: Icons.folder_outlined,
+                  tooltip: '默认文件夹图标',
+                ),
+                for (var id = 0; id < 24; id++)
+                  _iconChoice(
+                    value: id,
+                    icon: _keepassIcon(id),
+                    tooltip: 'KeePass 图标 ${id + 1}',
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('取消'),
+      ),
+      FilledButton(onPressed: _submit, child: const Text('创建')),
+    ],
+  );
+
+  Widget _iconChoice({
+    required int? value,
+    required IconData icon,
+    required String tooltip,
+  }) {
+    final selected = iconId == value;
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        onTap: () => setState(() => iconId = value),
+        borderRadius: BorderRadius.circular(8),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: selected
+                ? Theme.of(context).colorScheme.secondaryContainer
+                : null,
+            border: selected
+                ? Border.all(color: Theme.of(context).colorScheme.primary)
+                : null,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(icon),
+        ),
+      ),
+    );
+  }
 }
 
 class _FolderIconDialog extends StatelessWidget {

@@ -153,6 +153,17 @@ impl FileVaultSession {
         self.mutate(|engine, database| engine.create_group(database, parent_id, name))
     }
 
+    pub fn create_group_with_icon(
+        &mut self,
+        parent_id: Uuid,
+        name: &str,
+        icon_id: Option<u32>,
+    ) -> Result<Uuid> {
+        self.mutate(|engine, database| {
+            engine.create_group_with_icon(database, parent_id, name, icon_id)
+        })
+    }
+
     pub fn rename_group(&mut self, group_id: Uuid, name: &str) -> Result<()> {
         self.mutate(|engine, database| engine.rename_group(database, group_id, name))
     }

@@ -117,6 +117,18 @@ Future<String> createGroup({
   name: name,
 );
 
+Future<String> createGroupWithIcon({
+  required BigInt handleId,
+  required String parentId,
+  required String name,
+  int? builtInIconId,
+}) => RustLib.instance.api.crateApiSimpleCreateGroupWithIcon(
+  handleId: handleId,
+  parentId: parentId,
+  name: name,
+  builtInIconId: builtInIconId,
+);
+
 Future<void> renameGroup({
   required BigInt handleId,
   required String groupId,

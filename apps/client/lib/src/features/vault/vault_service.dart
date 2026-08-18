@@ -330,7 +330,12 @@ abstract interface class StructuredVaultService implements VaultService {
     String groupId,
     VaultEntryDraft draft,
   );
-  Future<String> createGroup(BigInt handleId, String parentId, String name);
+  Future<String> createGroup(
+    BigInt handleId,
+    String parentId,
+    String name, {
+    int? iconId,
+  });
   Future<void> renameGroup(BigInt handleId, String groupId, String name);
   Future<void> moveGroup(BigInt handleId, String groupId, String destinationId);
   Future<void> moveEntry(BigInt handleId, String entryId, String destinationId);
@@ -664,8 +669,17 @@ class NativeVaultService implements ProductivityVaultService {
   }
 
   @override
-  Future<String> createGroup(BigInt handleId, String parentId, String name) =>
-      native.createGroup(handleId: handleId, parentId: parentId, name: name);
+  Future<String> createGroup(
+    BigInt handleId,
+    String parentId,
+    String name, {
+    int? iconId,
+  }) => native.createGroupWithIcon(
+    handleId: handleId,
+    parentId: parentId,
+    name: name,
+    builtInIconId: iconId,
+  );
 
   @override
   Future<void> renameGroup(BigInt handleId, String groupId, String name) =>
