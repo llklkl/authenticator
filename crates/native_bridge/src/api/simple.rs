@@ -9,9 +9,10 @@ use flutter_rust_bridge::frb;
 use sync_core::{FileBackupStore, SyncEngine, SyncError, VaultMerger, WebDavProvider};
 use uuid::Uuid;
 use vault_core::{
-    EntryKind, EntrySecretField, FileVaultSession, KdbxAttachmentRecord, KdbxIconRecord, OtpConfig,
-    PasswordGeneratorRequest, PasswordHealthPolicy, PasswordHealthRisk, VaultEntry, VaultError,
-    generate_password, quick_unlock_key, remove_quick_unlock,
+    DEFAULT_PASSWORD_SYMBOLS, EntryKind, EntrySecretField, FileVaultSession, KdbxAttachmentRecord,
+    KdbxIconRecord, OtpConfig, PasswordGeneratorRequest, PasswordHealthPolicy, PasswordHealthRisk,
+    VaultEntry, VaultError, generate_password, normalize_symbol_characters, quick_unlock_key,
+    remove_quick_unlock,
 };
 use zeroize::Zeroizing;
 
@@ -46,6 +47,7 @@ pub struct OtpHandle {
 pub struct OtpPreview {
     pub code: String,
     pub valid_for_seconds: Option<u64>,
+    pub period_seconds: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -617,6 +619,7 @@ pub fn generate_random_password(
     uppercase: bool,
     digits: bool,
     symbols: bool,
+    symbol_characters: String,
     exclude_ambiguous: bool,
 ) -> Result<GeneratedPasswordView, BridgeError> {
     let generated = generate_password(&PasswordGeneratorRequest::Random {
@@ -625,12 +628,23 @@ pub fn generate_random_password(
         uppercase,
         digits,
         symbols,
+        symbol_characters,
         exclude_ambiguous,
     })?;
     Ok(GeneratedPasswordView {
         value: generated.value.to_string(),
         entropy_bits: generated.entropy_bits,
     })
+}
+
+#[frb(sync)]
+pub fn default_password_symbols() -> String {
+    DEFAULT_PASSWORD_SYMBOLS.to_owned()
+}
+
+#[frb(sync)]
+pub fn normalize_password_symbols(value: String) -> Result<String, BridgeError> {
+    normalize_symbol_characters(&value).map_err(BridgeError::from)
 }
 
 #[frb(sync)]
@@ -766,6 +780,7 @@ pub fn current_entry_otp(
     Ok(OtpPreview {
         code: code.value,
         valid_for_seconds: code.valid_for_seconds,
+        period_seconds: code.period_seconds,
     })
 }
 
@@ -872,6 +887,7 @@ pub fn current_otp(handle_id: u64, unix_seconds: i64) -> Result<OtpPreview, Brid
     Ok(OtpPreview {
         code: code.value,
         valid_for_seconds: code.valid_for_seconds,
+        period_seconds: code.period_seconds,
     })
 }
 
