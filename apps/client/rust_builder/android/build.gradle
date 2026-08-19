@@ -29,9 +29,9 @@ android {
         namespace 'com.flutter_rust_bridge.rust_lib_authenticator_vault'
     }
 
-    // Bumping the plugin compileSdkVersion requires all clients of this plugin
-    // to bump the version in their app.
-    compileSdkVersion 33
+    // Keep the library aligned with the Flutter app and current AndroidX
+    // metadata requirements.
+    compileSdkVersion 36
 
     // Use the NDK version
     // declared in /android/app/build.gradle file of the Flutter project.
