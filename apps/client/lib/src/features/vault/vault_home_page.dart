@@ -757,6 +757,7 @@ class _VaultHomePageState extends State<VaultHomePage>
         item.id,
         attachment.name,
         destination,
+        overwrite: true,
       );
     }, success: '附件已导出。');
   }

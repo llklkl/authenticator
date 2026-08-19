@@ -405,7 +405,8 @@ fn hmac_digest<M>(secret: &[u8], counter: &[u8]) -> Result<Vec<u8>>
 where
     M: Mac + hmac::digest::KeyInit,
 {
-    let mut mac = <M as Mac>::new_from_slice(secret).map_err(|_| VaultError::InvalidOtpSecret)?;
+    let mut mac =
+        <M as hmac::KeyInit>::new_from_slice(secret).map_err(|_| VaultError::InvalidOtpSecret)?;
     mac.update(counter);
     Ok(mac.finalize().into_bytes().to_vec())
 }

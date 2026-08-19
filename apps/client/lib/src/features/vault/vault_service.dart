@@ -576,12 +576,11 @@ class NativeVaultService implements ProductivityVaultService {
 
   @override
   Future<String?> chooseKdbxFile() async {
-    final result = await FilePicker.platform.pickFiles(
+    final result = await FilePicker.pickFile(
       type: FileType.custom,
       allowedExtensions: const ['kdbx'],
-      allowMultiple: false,
     );
-    return result?.files.single.path;
+    return result?.path;
   }
 
   @override
@@ -817,13 +816,22 @@ class NativeVaultService implements ProductivityVaultService {
 
   @override
   Future<String?> chooseAttachmentFile() async {
-    final result = await FilePicker.platform.pickFiles(allowMultiple: false);
-    return result?.files.single.path;
+    final result = await FilePicker.pickFile();
+    return result?.path;
   }
 
   @override
-  Future<String?> chooseAttachmentExportPath(String suggestedName) =>
-      FilePicker.platform.saveFile(fileName: suggestedName);
+  Future<String?> chooseAttachmentExportPath(String suggestedName) async {
+    final destination = await FilePicker.saveFile(
+      fileName: suggestedName,
+      bytes: Uint8List(0),
+    );
+    if (destination == null) return null;
+    if (destination.scheme != 'file') {
+      throw UnsupportedError('The selected destination is not a local file.');
+    }
+    return destination.toFilePath();
+  }
 
   @override
   Future<void> addAttachment(
