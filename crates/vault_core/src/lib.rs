@@ -18,7 +18,10 @@ pub use kdbx::{
     PasswordHealthRisk,
 };
 pub use otp::{OtpAlgorithm, OtpCode, OtpConfig, OtpKind};
-pub use password::{GeneratedPassword, PasswordGeneratorRequest, generate_password};
+pub use password::{
+    DEFAULT_PASSWORD_SYMBOLS, GeneratedPassword, PasswordGeneratorRequest, generate_password,
+    normalize_symbol_characters,
+};
 pub use quick_unlock::{
     QuickUnlockEnrollment, prepare_quick_unlock, quick_unlock_key, remove_quick_unlock,
     unseal_quick_unlock,

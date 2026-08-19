@@ -19,7 +19,7 @@ async-trait = "0.1"
 bip39 = { version = "2.2", default-features = false, features = ["std", "zeroize"] }
 data-encoding = "2"
 getrandom = "0.3"
-hmac = "0.12"
+hmac = "0.13"
 percent-encoding = "2"
 serde = { version = "1", features = ["derive"] }
 sha1 = "0.11"

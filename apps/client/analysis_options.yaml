@@ -18,6 +18,9 @@ analyzer:
     - windows/**
     - macos/**
     - linux/**
+    # Cargokit is a vendored, standalone Dart package with its own pubspec.
+    # The application-level analyzer must not resolve it with the app package.
+    - rust_builder/cargokit/build_tool/**
 
 linter:
   # The lint rules applied to this project can be customized in the

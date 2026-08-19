@@ -233,6 +233,7 @@ GeneratedPasswordView generateRandomPassword({
   required bool uppercase,
   required bool digits,
   required bool symbols,
+  required String symbolCharacters,
   required bool excludeAmbiguous,
 }) => RustLib.instance.api.crateApiSimpleGenerateRandomPassword(
   length: length,
@@ -240,8 +241,15 @@ GeneratedPasswordView generateRandomPassword({
   uppercase: uppercase,
   digits: digits,
   symbols: symbols,
+  symbolCharacters: symbolCharacters,
   excludeAmbiguous: excludeAmbiguous,
 );
+
+String defaultPasswordSymbols() =>
+    RustLib.instance.api.crateApiSimpleDefaultPasswordSymbols();
+
+String normalizePasswordSymbols({required String value}) =>
+    RustLib.instance.api.crateApiSimpleNormalizePasswordSymbols(value: value);
 
 GeneratedPasswordView generatePassphrase({
   required int wordCount,
@@ -486,11 +494,17 @@ class OtpHandle {
 class OtpPreview {
   final String code;
   final BigInt? validForSeconds;
+  final BigInt? periodSeconds;
 
-  const OtpPreview({required this.code, this.validForSeconds});
+  const OtpPreview({
+    required this.code,
+    this.validForSeconds,
+    this.periodSeconds,
+  });
 
   @override
-  int get hashCode => code.hashCode ^ validForSeconds.hashCode;
+  int get hashCode =>
+      code.hashCode ^ validForSeconds.hashCode ^ periodSeconds.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -498,7 +512,8 @@ class OtpPreview {
       other is OtpPreview &&
           runtimeType == other.runtimeType &&
           code == other.code &&
-          validForSeconds == other.validForSeconds;
+          validForSeconds == other.validForSeconds &&
+          periodSeconds == other.periodSeconds;
 }
 
 class PasswordHealthView {

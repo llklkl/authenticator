@@ -1,14 +1,40 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:authenticator_vault/src/features/security/platform_security_service.dart';
 import 'package:authenticator_vault/src/rust/api/simple.dart' as native;
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:path_provider/path_provider.dart';
 
 enum EntryType { login, otp, recoveryCodes, secureNote }
+
+enum AppThemePreference { system, light, dark }
+
+enum AppLanguage { zhHans, english }
+
+class AppPreferences {
+  const AppPreferences({
+    this.theme = AppThemePreference.system,
+    this.language = AppLanguage.zhHans,
+    this.passwordSymbols = '!@#\$%^&*()-_=+[]{};:,.?',
+  });
+
+  final AppThemePreference theme;
+  final AppLanguage language;
+  final String passwordSymbols;
+
+  AppPreferences copyWith({
+    AppThemePreference? theme,
+    AppLanguage? language,
+    String? passwordSymbols,
+  }) => AppPreferences(
+    theme: theme ?? this.theme,
+    language: language ?? this.language,
+    passwordSymbols: passwordSymbols ?? this.passwordSymbols,
+  );
+}
 
 String suggestWorkspaceName(String path) {
   final fileName = path.replaceAll('\\', '/').split('/').last.trim();
@@ -247,10 +273,15 @@ class VaultEntryDraft {
 }
 
 class OtpValue {
-  const OtpValue({required this.code, this.validForSeconds});
+  const OtpValue({
+    required this.code,
+    this.validForSeconds,
+    this.periodSeconds,
+  });
 
   final String code;
   final int? validForSeconds;
+  final int? periodSeconds;
 }
 
 class WebDavSettings {
@@ -351,6 +382,10 @@ abstract interface class StructuredVaultService implements VaultService {
 abstract interface class ProductivityVaultService
     implements StructuredVaultService, SecurityVaultService {
   int get stalePasswordDays;
+  ValueListenable<AppPreferences> get preferences;
+  Future<void> setThemePreference(AppThemePreference theme);
+  Future<void> setLanguage(AppLanguage language);
+  Future<String> setPasswordSymbols(String symbols);
   Future<void> setStalePasswordDays(int days);
   Future<void> setGroupIcon(BigInt handleId, String groupId, int? iconId);
   Future<Uint8List> loadCustomIcon(BigInt handleId, String customIconId);
@@ -385,6 +420,7 @@ abstract interface class ProductivityVaultService
     bool uppercase = true,
     bool digits = true,
     bool symbols = true,
+    String? symbolCharacters,
     bool excludeAmbiguous = true,
   });
   Future<GeneratedPassword> generatePassphrase({
@@ -412,6 +448,7 @@ class NativeVaultService implements ProductivityVaultService {
     this.platformSecurity,
     this._newWorkspaceId,
     this._secureStorage,
+    this._normalizePasswordSymbols,
   );
 
   NativeVaultService.forTesting({
@@ -420,16 +457,20 @@ class NativeVaultService implements ProductivityVaultService {
     required PlatformSecurityService platformSecurity,
     required String Function() newWorkspaceId,
     FlutterSecureStorage? secureStorage,
+    String Function(String)? normalizePasswordSymbols,
   }) : this._(
          registryFile,
          vaultDirectory,
          platformSecurity,
          newWorkspaceId,
          secureStorage ?? const FlutterSecureStorage(),
+         normalizePasswordSymbols ??
+             ((value) => native.normalizePasswordSymbols(value: value)),
        );
 
   final File _registryFile;
   final Directory _vaultDirectory;
+  final String Function(String) _normalizePasswordSymbols;
   @override
   final PlatformSecurityService platformSecurity;
   final String Function() _newWorkspaceId;
@@ -439,6 +480,10 @@ class NativeVaultService implements ProductivityVaultService {
   int autoLockSeconds = 300;
   @override
   int stalePasswordDays = 180;
+  @override
+  final ValueNotifier<AppPreferences> preferences = ValueNotifier(
+    const AppPreferences(),
+  );
 
   static Future<NativeVaultService> create({
     PlatformSecurityService? platformSecurity,
@@ -454,6 +499,7 @@ class NativeVaultService implements ProductivityVaultService {
       platformSecurity ?? MethodChannelSecurityService(),
       native.generateWorkspaceId,
       const FlutterSecureStorage(),
+      (value) => native.normalizePasswordSymbols(value: value),
     );
   }
 
@@ -483,7 +529,9 @@ class NativeVaultService implements ProductivityVaultService {
       } else {
         final root = decoded as Map<String, Object?>;
         final version = root['version'];
-        if (version != 1 && version != 2) throw const FormatException();
+        if (version != 1 && version != 2 && version != 3) {
+          throw const FormatException();
+        }
         autoLockSeconds = root['autoLockSeconds']! as int;
         if (!const [0, 30, 60, 300, 900].contains(autoLockSeconds)) {
           throw const FormatException();
@@ -493,11 +541,20 @@ class NativeVaultService implements ProductivityVaultService {
               return WorkspaceInfo.fromJson(value! as Map<String, Object?>);
             })
             .toList(growable: false);
-        if (version == 2) {
+        if (version == 2 || version == 3) {
           stalePasswordDays = root['stalePasswordDays'] as int? ?? 180;
           if (!const [0, 90, 180, 365].contains(stalePasswordDays)) {
             throw const FormatException();
           }
+        }
+        if (version == 3) {
+          preferences.value = AppPreferences(
+            theme: _themePreferenceFromJson(root['themeMode']! as String),
+            language: _languageFromJson(root['locale']! as String),
+            passwordSymbols: _normalizePasswordSymbols(
+              root['passwordSymbols']! as String,
+            ),
+          );
         } else {
           await _registryFile.copy('${_registryFile.path}.bak');
           await _writeRegistry(workspaces);
@@ -843,6 +900,7 @@ class NativeVaultService implements ProductivityVaultService {
     bool uppercase = true,
     bool digits = true,
     bool symbols = true,
+    String? symbolCharacters,
     bool excludeAmbiguous = true,
   }) async {
     final value = native.generateRandomPassword(
@@ -851,6 +909,7 @@ class NativeVaultService implements ProductivityVaultService {
       uppercase: uppercase,
       digits: digits,
       symbols: symbols,
+      symbolCharacters: symbolCharacters ?? preferences.value.passwordSymbols,
       excludeAmbiguous: excludeAmbiguous,
     );
     return GeneratedPassword(
@@ -925,6 +984,7 @@ class NativeVaultService implements ProductivityVaultService {
     return OtpValue(
       code: value.code,
       validForSeconds: value.validForSeconds?.toInt(),
+      periodSeconds: value.periodSeconds?.toInt(),
     );
   }
 
@@ -974,6 +1034,27 @@ class NativeVaultService implements ProductivityVaultService {
     }
     stalePasswordDays = days;
     await _writeRegistry(await loadWorkspaces());
+  }
+
+  @override
+  Future<void> setThemePreference(AppThemePreference theme) async {
+    preferences.value = preferences.value.copyWith(theme: theme);
+    await _writeRegistry(await loadWorkspaces());
+  }
+
+  @override
+  Future<void> setLanguage(AppLanguage language) async {
+    preferences.value = preferences.value.copyWith(language: language);
+    await _writeRegistry(await loadWorkspaces());
+  }
+
+  @override
+  Future<String> setPasswordSymbols(String symbols) async {
+    final normalized = _normalizePasswordSymbols(symbols);
+    if (normalized.isEmpty) throw ArgumentError.value(symbols);
+    preferences.value = preferences.value.copyWith(passwordSymbols: normalized);
+    await _writeRegistry(await loadWorkspaces());
+    return normalized;
   }
 
   @override
@@ -1174,9 +1255,12 @@ class NativeVaultService implements ProductivityVaultService {
     final temporary = File('${_registryFile.path}.tmp');
     await temporary.writeAsString(
       jsonEncode({
-        'version': 2,
+        'version': 3,
         'autoLockSeconds': autoLockSeconds,
         'stalePasswordDays': stalePasswordDays,
+        'themeMode': _themePreferenceToJson(preferences.value.theme),
+        'locale': _languageToJson(preferences.value.language),
+        'passwordSymbols': preferences.value.passwordSymbols,
         'workspaces': workspaces.map((item) => item.toJson()).toList(),
       }),
       flush: true,
@@ -1240,3 +1324,23 @@ PasswordHealthRisk _fromNativeHealthRisk(native.HealthRiskView value) =>
 
 String _webDavPasswordKey(String workspaceId) =>
     'authenticator_vault.webdav.$workspaceId.password';
+
+String _themePreferenceToJson(AppThemePreference value) => value.name;
+
+AppThemePreference _themePreferenceFromJson(String value) => switch (value) {
+  'system' => AppThemePreference.system,
+  'light' => AppThemePreference.light,
+  'dark' => AppThemePreference.dark,
+  _ => throw const FormatException(),
+};
+
+String _languageToJson(AppLanguage value) => switch (value) {
+  AppLanguage.zhHans => 'zh_CN',
+  AppLanguage.english => 'en',
+};
+
+AppLanguage _languageFromJson(String value) => switch (value) {
+  'zh_CN' => AppLanguage.zhHans,
+  'en' => AppLanguage.english,
+  _ => throw const FormatException(),
+};
