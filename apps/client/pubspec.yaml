@@ -39,7 +39,7 @@ dependencies:
   rust_lib_authenticator_vault:
     path: rust_builder
   flutter_rust_bridge: 2.12.0
-  file_picker: ^10.3.10
+  file_picker: ^12.0.0
   path_provider: ^2.1.6
   window_manager: ^0.5.2
   flutter_secure_storage: ^10.3.1
