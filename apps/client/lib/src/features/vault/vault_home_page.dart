@@ -76,6 +76,12 @@ class _VaultHomePageState extends State<VaultHomePage>
       _workspaces.where((workspace) => workspace.id == _selectedId).firstOrNull;
 
   BigInt? get _selectedHandle => _handles[_selectedId];
+  bool get _selectedWritable {
+    final handle = _selectedHandle;
+    final service = _productivityService;
+    return handle == null || service == null || service.isVaultWritable(handle);
+  }
+
   List<VaultEntryItem> get _selectedEntries =>
       _entries[_selectedId] ?? const [];
   VaultContent? get _selectedContent => _contents[_selectedId];
@@ -432,6 +438,19 @@ class _VaultHomePageState extends State<VaultHomePage>
         .firstOrNull;
     final handle = _handles[workspaceId];
     if (service == null || workspace == null || handle == null) return;
+    if (!service.isVaultWritable(handle)) return;
+    final SyncStateItem persistedSyncState;
+    try {
+      persistedSyncState = await service.syncState(workspace.id);
+    } on Object {
+      _setSyncState(workspaceId, _WorkspaceSyncState.failed);
+      return;
+    }
+    if (persistedSyncState.restorePending ||
+        persistedSyncState.attachmentConflict) {
+      _setSyncState(workspaceId, _WorkspaceSyncState.failed);
+      return;
+    }
     final connections = await Connectivity().checkConnectivity();
     final offline =
         connections.isEmpty || connections.contains(ConnectivityResult.none);
@@ -1177,6 +1196,18 @@ class _VaultHomePageState extends State<VaultHomePage>
                   ),
                 ],
               ),
+              if (_selectedHandle != null && !_selectedWritable)
+                MaterialBanner(
+                  leading: const Icon(Icons.lock_outline),
+                  content: Text(
+                    context.tr('{format} 以只读模式打开；当前版本不会把它转换或写回。', {
+                      'format': _productivityService!.vaultFormat(
+                        _selectedHandle!,
+                      ),
+                    }),
+                  ),
+                  actions: const [SizedBox.shrink()],
+                ),
               Expanded(
                 child: LayoutBuilder(
                   builder: (context, constraints) {
@@ -1352,6 +1383,7 @@ class _VaultHomePageState extends State<VaultHomePage>
     mainAxisSize: MainAxisSize.min,
     children: [
       PopupMenuButton<EntryType>(
+        enabled: _selectedWritable,
         tooltip: context.tr('新增条目'),
         onSelected: _addEntry,
         itemBuilder: (_) => [
@@ -1377,7 +1409,7 @@ class _VaultHomePageState extends State<VaultHomePage>
         ),
       ),
       TextButton.icon(
-        onPressed: _importOtp,
+        onPressed: _selectedWritable ? _importOtp : null,
         icon: const Icon(Icons.qr_code_2, size: 19),
         label: Text(context.tr('导入 OTP')),
       ),
@@ -1505,7 +1537,9 @@ class _VaultHomePageState extends State<VaultHomePage>
                 Text('文件夹', style: Theme.of(context).textTheme.labelLarge),
                 const Spacer(),
                 IconButton(
-                  onPressed: _structuredService == null ? null : _createFolder,
+                  onPressed: _structuredService == null || !_selectedWritable
+                      ? null
+                      : _createFolder,
                   tooltip: '新建文件夹',
                   icon: const Icon(Icons.create_new_folder_outlined, size: 19),
                 ),

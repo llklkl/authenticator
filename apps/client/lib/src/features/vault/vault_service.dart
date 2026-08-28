@@ -160,10 +160,17 @@ class VaultAttachmentItem {
 }
 
 class UnlockedWorkspace {
-  const UnlockedWorkspace({required this.workspace, required this.handleId});
+  const UnlockedWorkspace({
+    required this.workspace,
+    required this.handleId,
+    this.writable = true,
+    this.format = 'KDBX 4.1',
+  });
 
   final WorkspaceInfo workspace;
   final BigInt handleId;
+  final bool writable;
+  final String format;
 }
 
 class VaultEntryItem {
@@ -298,10 +305,81 @@ class WebDavSettings {
   final bool allowInsecureHttp;
 }
 
+enum SyncAction { createdRemote, uploaded, downloaded, merged, unchanged }
+
 class SyncSummary {
-  const SyncSummary({required this.attempts, required this.merged});
+  const SyncSummary({
+    required this.attempts,
+    required this.merged,
+    this.action = SyncAction.unchanged,
+    this.autoMergedObjects = 0,
+    this.createdConflicts = 0,
+    this.pendingConflicts = 0,
+    this.baselineRebuilt = false,
+  });
   final int attempts;
   final bool merged;
+  final SyncAction action;
+  final int autoMergedObjects;
+  final int createdConflicts;
+  final int pendingConflicts;
+  final bool baselineRebuilt;
+}
+
+enum SyncConflictChoice { primary, alternate }
+
+enum RestoreSyncDecision { merge, replaceRemote }
+
+class SyncConflictItem {
+  const SyncConflictItem({
+    required this.id,
+    required this.title,
+    required this.fields,
+  });
+  final String id;
+  final String title;
+  final List<String> fields;
+}
+
+class SyncBackupItem {
+  const SyncBackupItem({
+    required this.id,
+    required this.createdAt,
+    required this.encryptedSize,
+    required this.origin,
+  });
+  final String id;
+  final DateTime createdAt;
+  final int encryptedSize;
+  final String origin;
+}
+
+class SyncDiagnosticItem {
+  const SyncDiagnosticItem({
+    required this.timestamp,
+    required this.outcome,
+    required this.errorCode,
+    required this.attempts,
+    required this.durationMs,
+    required this.pendingConflicts,
+  });
+  final DateTime timestamp;
+  final String outcome;
+  final String? errorCode;
+  final int attempts;
+  final int durationMs;
+  final int pendingConflicts;
+}
+
+class SyncStateItem {
+  const SyncStateItem({
+    required this.pendingConflicts,
+    required this.restorePending,
+    required this.attachmentConflict,
+  });
+  final int pendingConflicts;
+  final bool restorePending;
+  final bool attachmentConflict;
 }
 
 abstract interface class VaultService {
@@ -439,6 +517,35 @@ abstract interface class ProductivityVaultService
     WorkspaceInfo workspace, {
     String? passwordOverride,
   });
+  bool isVaultWritable(BigInt handleId);
+  String vaultFormat(BigInt handleId);
+  Future<List<SyncConflictItem>> listSyncConflicts(BigInt handleId);
+  Future<void> resolveSyncConflict(
+    BigInt handleId,
+    String conflictId,
+    SyncConflictChoice defaultChoice, {
+    Map<String, SyncConflictChoice> fieldChoices = const {},
+  });
+  Future<List<SyncBackupItem>> listSyncBackups(
+    BigInt handleId,
+    String workspaceId,
+  );
+  Future<void> restoreSyncBackup(
+    BigInt handleId,
+    String workspaceId,
+    String backupId,
+  );
+  Future<SyncSummary> completeRestoreSync(
+    BigInt handleId,
+    WorkspaceInfo workspace,
+    RestoreSyncDecision decision, {
+    String? passwordOverride,
+  });
+  Future<List<SyncDiagnosticItem>> listSyncDiagnostics(String workspaceId);
+  Future<SyncStateItem> syncState(String workspaceId);
+  Future<String?> chooseDiagnosticsExportPath();
+  Future<void> exportSyncDiagnostics(String workspaceId, String path);
+  Future<void> clearSyncDiagnostics(String workspaceId);
 }
 
 class NativeVaultService implements ProductivityVaultService {
@@ -450,6 +557,8 @@ class NativeVaultService implements ProductivityVaultService {
     this._secureStorage,
     this._normalizePasswordSymbols,
   );
+
+  final Map<BigInt, ({bool writable, String format})> _vaultFormats = {};
 
   NativeVaultService.forTesting({
     required File registryFile,
@@ -597,7 +706,13 @@ class NativeVaultService implements ProductivityVaultService {
     );
     final workspace = WorkspaceInfo(id: id, name: name, path: path);
     await _appendWorkspace(workspace);
-    return UnlockedWorkspace(workspace: workspace, handleId: handle.id);
+    _rememberHandle(handle);
+    return UnlockedWorkspace(
+      workspace: workspace,
+      handleId: handle.id,
+      writable: handle.writable,
+      format: _formatName(handle.format),
+    );
   }
 
   @override
@@ -624,7 +739,13 @@ class NativeVaultService implements ProductivityVaultService {
       path: internalPath,
     );
     await _appendWorkspace(workspace);
-    return UnlockedWorkspace(workspace: workspace, handleId: handle.id);
+    _rememberHandle(handle);
+    return UnlockedWorkspace(
+      workspace: workspace,
+      handleId: handle.id,
+      writable: handle.writable,
+      format: _formatName(handle.format),
+    );
   }
 
   @override
@@ -633,11 +754,15 @@ class NativeVaultService implements ProductivityVaultService {
       path: workspace.path,
       masterPassword: password,
     );
+    _rememberHandle(handle);
     return handle.id;
   }
 
   @override
-  Future<void> lockAll() async => native.lockAllVaults();
+  Future<void> lockAll() async {
+    native.lockAllVaults();
+    _vaultFormats.clear();
+  }
 
   @override
   Future<List<VaultEntryItem>> listEntries(BigInt handleId) async => native
@@ -1011,10 +1136,7 @@ class NativeVaultService implements ProductivityVaultService {
     String workspaceId,
     WebDavSettings settings,
   ) async {
-    final backupDirectory = Directory(
-      '${_vaultDirectory.path}${Platform.pathSeparator}backups'
-      '${Platform.pathSeparator}$workspaceId',
-    );
+    final backupDirectory = _syncDirectory(workspaceId);
     final result = await native.syncWebdav(
       handleId: handleId,
       endpoint: settings.endpoint,
@@ -1023,8 +1145,171 @@ class NativeVaultService implements ProductivityVaultService {
       allowInsecureHttp: settings.allowInsecureHttp,
       backupDirectory: backupDirectory.path,
     );
-    return SyncSummary(attempts: result.attempts, merged: result.merged);
+    return _fromNativeSyncResult(result);
   }
+
+  @override
+  bool isVaultWritable(BigInt handleId) =>
+      _vaultFormats[handleId]?.writable ?? true;
+
+  @override
+  String vaultFormat(BigInt handleId) =>
+      _vaultFormats[handleId]?.format ?? 'KDBX 4.1';
+
+  @override
+  Future<List<SyncConflictItem>> listSyncConflicts(BigInt handleId) async =>
+      (await native.listSyncConflicts(handleId: handleId))
+          .map(
+            (value) => SyncConflictItem(
+              id: value.id,
+              title: value.title,
+              fields: value.fields.map((field) => field.key).toList(),
+            ),
+          )
+          .toList(growable: false);
+
+  @override
+  Future<void> resolveSyncConflict(
+    BigInt handleId,
+    String conflictId,
+    SyncConflictChoice defaultChoice, {
+    Map<String, SyncConflictChoice> fieldChoices = const {},
+  }) => native.resolveSyncConflict(
+    handleId: handleId,
+    conflictId: conflictId,
+    defaultChoice: _toNativeConflictChoice(defaultChoice),
+    fieldChoices: fieldChoices.entries
+        .map(
+          (entry) => native.ConflictFieldChoiceInput(
+            key: entry.key,
+            choice: _toNativeConflictChoice(entry.value),
+          ),
+        )
+        .toList(growable: false),
+  );
+
+  @override
+  Future<List<SyncBackupItem>> listSyncBackups(
+    BigInt handleId,
+    String workspaceId,
+  ) async =>
+      (await native.listSyncBackups(
+            handleId: handleId,
+            stateDirectory: _syncDirectory(workspaceId).path,
+          ))
+          .map((value) {
+            return SyncBackupItem(
+              id: value.id,
+              createdAt: DateTime.fromMillisecondsSinceEpoch(
+                value.createdAtUnixMs,
+              ),
+              encryptedSize: value.encryptedSize.toInt(),
+              origin: value.origin.name,
+            );
+          })
+          .toList(growable: false);
+
+  @override
+  Future<void> restoreSyncBackup(
+    BigInt handleId,
+    String workspaceId,
+    String backupId,
+  ) => native.restoreSyncBackup(
+    handleId: handleId,
+    stateDirectory: _syncDirectory(workspaceId).path,
+    backupId: backupId,
+  );
+
+  @override
+  Future<SyncSummary> completeRestoreSync(
+    BigInt handleId,
+    WorkspaceInfo workspace,
+    RestoreSyncDecision decision, {
+    String? passwordOverride,
+  }) async {
+    final config = workspace.sync;
+    if (!config.configured) throw StateError('sync is not configured');
+    final password = passwordOverride?.isNotEmpty == true
+        ? passwordOverride
+        : await _secureStorage.read(key: _webDavPasswordKey(workspace.id));
+    if (password == null || password.isEmpty) {
+      throw StateError('sync credentials are unavailable');
+    }
+    final result = await native.completeRestoreWebdav(
+      handleId: handleId,
+      endpoint: config.endpoint,
+      username: config.username,
+      password: password,
+      allowInsecureHttp: config.allowInsecureHttp,
+      stateDirectory: _syncDirectory(workspace.id).path,
+      decision: switch (decision) {
+        RestoreSyncDecision.merge => native.RestoreDecisionView.merge,
+        RestoreSyncDecision.replaceRemote =>
+          native.RestoreDecisionView.replaceRemote,
+      },
+    );
+    return _fromNativeSyncResult(result);
+  }
+
+  @override
+  Future<List<SyncDiagnosticItem>> listSyncDiagnostics(
+    String workspaceId,
+  ) async =>
+      (await native.listSyncDiagnostics(
+            stateDirectory: _syncDirectory(workspaceId).path,
+          ))
+          .map((value) {
+            return SyncDiagnosticItem(
+              timestamp: DateTime.fromMillisecondsSinceEpoch(
+                value.timestampUnixMs,
+              ),
+              outcome: value.outcome,
+              errorCode: value.errorCode,
+              attempts: value.attempts,
+              durationMs: value.durationMs.toInt(),
+              pendingConflicts: value.pendingConflicts,
+            );
+          })
+          .toList(growable: false);
+
+  @override
+  Future<SyncStateItem> syncState(String workspaceId) async {
+    final value = await native.syncState(
+      stateDirectory: _syncDirectory(workspaceId).path,
+    );
+    return SyncStateItem(
+      pendingConflicts: value.pendingConflicts,
+      restorePending: value.restorePending,
+      attachmentConflict: value.attachmentConflict,
+    );
+  }
+
+  @override
+  Future<String?> chooseDiagnosticsExportPath() async {
+    final destination = await FilePicker.saveFile(
+      dialogTitle: 'Export redacted sync diagnostics',
+      fileName: 'authenticator-sync-diagnostics.json',
+      type: FileType.custom,
+      allowedExtensions: const ['json'],
+      bytes: Uint8List(0),
+    );
+    if (destination == null) return null;
+    if (destination.scheme != 'file') {
+      throw UnsupportedError('The selected destination is not a local file.');
+    }
+    return destination.toFilePath();
+  }
+
+  @override
+  Future<void> exportSyncDiagnostics(String workspaceId, String path) =>
+      native.exportSyncDiagnostics(
+        stateDirectory: _syncDirectory(workspaceId).path,
+        destinationPath: path,
+      );
+
+  @override
+  Future<void> clearSyncDiagnostics(String workspaceId) => native
+      .clearSyncDiagnostics(stateDirectory: _syncDirectory(workspaceId).path);
 
   @override
   Future<void> setAutoLockSeconds(int seconds) async {
@@ -1228,9 +1513,15 @@ class NativeVaultService implements ProductivityVaultService {
       return QuickUnlockOutcome(
         opened: result.opened
             .map((value) {
+              _vaultFormats[value.handleId] = (
+                writable: value.writable,
+                format: _formatName(value.format),
+              );
               return UnlockedWorkspace(
                 workspace: byId[value.workspaceId]!,
                 handleId: value.handleId,
+                writable: value.writable,
+                format: _formatName(value.format),
               );
             })
             .toList(growable: false),
@@ -1257,6 +1548,18 @@ class NativeVaultService implements ProductivityVaultService {
     final workspaces = await loadWorkspaces();
     if (workspaces.any((item) => item.path == workspace.path)) return;
     await _writeRegistry([...workspaces, workspace]);
+  }
+
+  Directory _syncDirectory(String workspaceId) => Directory(
+    '${_vaultDirectory.path}${Platform.pathSeparator}backups'
+    '${Platform.pathSeparator}$workspaceId',
+  );
+
+  void _rememberHandle(native.VaultHandle handle) {
+    _vaultFormats[handle.id] = (
+      writable: handle.writable,
+      format: _formatName(handle.format),
+    );
   }
 
   Future<void> _writeRegistry(List<WorkspaceInfo> workspaces) async {
@@ -1303,6 +1606,37 @@ EntryType _fromNativeKind(native.VaultEntryKind kind) => switch (kind) {
   native.VaultEntryKind.recoveryCodes => EntryType.recoveryCodes,
   native.VaultEntryKind.secureNote => EntryType.secureNote,
 };
+
+String _formatName(native.VaultFormatView value) => switch (value) {
+  native.VaultFormatView.kdbx41 => 'KDBX 4.1',
+  native.VaultFormatView.kdbx40ReadOnly => 'KDBX 4.0',
+  native.VaultFormatView.otherReadOnly => 'KDBX',
+};
+
+SyncAction _fromNativeSyncAction(native.SyncActionView value) =>
+    switch (value) {
+      native.SyncActionView.createdRemote => SyncAction.createdRemote,
+      native.SyncActionView.uploaded => SyncAction.uploaded,
+      native.SyncActionView.downloaded => SyncAction.downloaded,
+      native.SyncActionView.merged => SyncAction.merged,
+      native.SyncActionView.unchanged => SyncAction.unchanged,
+    };
+
+native.ConflictChoiceView _toNativeConflictChoice(SyncConflictChoice value) =>
+    switch (value) {
+      SyncConflictChoice.primary => native.ConflictChoiceView.primary,
+      SyncConflictChoice.alternate => native.ConflictChoiceView.alternate,
+    };
+
+SyncSummary _fromNativeSyncResult(native.SyncResult result) => SyncSummary(
+  attempts: result.attempts,
+  merged: result.merged,
+  action: _fromNativeSyncAction(result.action),
+  autoMergedObjects: result.autoMergedObjects,
+  createdConflicts: result.createdConflicts,
+  pendingConflicts: result.pendingConflicts,
+  baselineRebuilt: result.baselineRebuilt,
+);
 
 VaultIconItem _fromNativeIcon(native.VaultIconView icon) => VaultIconItem(
   type: switch (icon.kind) {

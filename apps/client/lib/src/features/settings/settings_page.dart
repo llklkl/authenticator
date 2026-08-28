@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:authenticator_vault/src/features/vault/desktop_title_bar.dart';
 import 'package:authenticator_vault/src/features/vault/vault_service.dart';
 import 'package:authenticator_vault/src/l10n.dart';
@@ -44,6 +46,12 @@ class _SettingsPageState extends State<SettingsPage> {
   bool busy = false;
   List<PasswordHealthFinding>? health;
   bool canQuickUnlock = false;
+  SyncSummary? lastSync;
+  List<SyncConflictItem> conflicts = const [];
+  List<SyncBackupItem> backups = const [];
+  List<SyncDiagnosticItem> diagnostics = const [];
+  bool restorePending = false;
+  bool attachmentConflict = false;
 
   WorkspaceInfo? get selected =>
       workspaces.where((item) => item.id == selectedWorkspaceId).firstOrNull;
@@ -52,6 +60,7 @@ class _SettingsPageState extends State<SettingsPage> {
   void initState() {
     super.initState();
     _loadSyncFields();
+    unawaited(_refreshSyncDataSilently());
     widget.service.canQuickUnlock().then((value) {
       if (mounted) setState(() => canQuickUnlock = value);
     });
@@ -123,14 +132,187 @@ class _SettingsPageState extends State<SettingsPage> {
     final workspace = selected;
     final handle = widget.handles[workspace?.id];
     if (workspace == null || handle == null) return;
+    if (!widget.service.isVaultWritable(handle)) return;
     await _run(() async {
-      await widget.service.syncConfiguredWorkspace(
+      lastSync = await widget.service.syncConfiguredWorkspace(
         handle,
         workspace,
         passwordOverride: password.text.isEmpty ? null : password.text,
       );
+      await _loadSyncData();
       widget.onVaultChanged();
+      if (mounted) setState(() {});
     }, success: context.tr('同步完成。'));
+  }
+
+  Future<void> _loadSyncData() async {
+    final workspace = selected;
+    final handle = widget.handles[workspace?.id];
+    if (workspace == null) return;
+    final state = await widget.service.syncState(workspace.id);
+    restorePending = state.restorePending;
+    attachmentConflict = state.attachmentConflict;
+    diagnostics = await widget.service.listSyncDiagnostics(workspace.id);
+    if (handle != null) {
+      conflicts = await widget.service.listSyncConflicts(handle);
+      backups = await widget.service.listSyncBackups(handle, workspace.id);
+    } else {
+      conflicts = const [];
+      backups = const [];
+    }
+  }
+
+  Future<void> _refreshSyncDataSilently() async {
+    try {
+      await _loadSyncData();
+      if (mounted) setState(() {});
+    } on Object {
+      // The regular action path surfaces typed failures; initial rendering
+      // remains usable if optional sync state is unavailable.
+    }
+  }
+
+  Future<void> _resolveConflict(SyncConflictItem conflict) async {
+    final handle = widget.handles[selectedWorkspaceId];
+    if (handle == null) return;
+    final success = context.tr('冲突已解决；请再次同步以发送结果。');
+    final choices = <String, SyncConflictChoice>{
+      for (final field in conflict.fields) field: SyncConflictChoice.primary,
+    };
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(context.tr('解决冲突：{title}', {'title': conflict.title})),
+          content: SizedBox(
+            width: 520,
+            child: ListView(
+              shrinkWrap: true,
+              children: [
+                Text(context.tr('逐字段选择保留当前设备或另一设备的值。密码内容不会在这里显示。')),
+                const SizedBox(height: 12),
+                for (final field in conflict.fields)
+                  DropdownButtonFormField<SyncConflictChoice>(
+                    initialValue: choices[field],
+                    decoration: InputDecoration(labelText: field),
+                    items: [
+                      DropdownMenuItem(
+                        value: SyncConflictChoice.primary,
+                        child: Text(context.tr('当前版本')),
+                      ),
+                      DropdownMenuItem(
+                        value: SyncConflictChoice.alternate,
+                        child: Text(context.tr('另一设备版本')),
+                      ),
+                    ],
+                    onChanged: (value) =>
+                        setDialogState(() => choices[field] = value!),
+                  ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: Text(context.tr('取消')),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: Text(context.tr('应用解决方案')),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (accepted != true) return;
+    await _run(() async {
+      await widget.service.resolveSyncConflict(
+        handle,
+        conflict.id,
+        SyncConflictChoice.primary,
+        fieldChoices: choices,
+      );
+      await _loadSyncData();
+      widget.onVaultChanged();
+      if (mounted) setState(() {});
+    }, success: success);
+  }
+
+  Future<void> _restoreBackup(SyncBackupItem backup) async {
+    final workspace = selected;
+    final handle = widget.handles[workspace?.id];
+    if (workspace == null || handle == null) return;
+    final success = context.tr('备份已恢复，自动同步已暂停。');
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(context.tr('恢复加密备份？')),
+        content: Text(context.tr('当前文件会先自动备份。恢复后自动同步将暂停，避免直接覆盖远端。')),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text(context.tr('取消')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(context.tr('恢复并暂停同步')),
+          ),
+        ],
+      ),
+    );
+    if (accepted != true) return;
+    await _run(() async {
+      await widget.service.restoreSyncBackup(handle, workspace.id, backup.id);
+      workspaces = await widget.service.saveWorkspaceSync(
+        workspace,
+        WorkspaceSyncSettings(
+          endpoint: workspace.sync.endpoint,
+          username: workspace.sync.username,
+          allowInsecureHttp: workspace.sync.allowInsecureHttp,
+          autoSync: false,
+          nonMeteredOnly: workspace.sync.nonMeteredOnly,
+          passwordStored: workspace.sync.passwordStored,
+        ),
+      );
+      widget.onWorkspacesChanged(workspaces);
+      await _loadSyncData();
+      widget.onVaultChanged();
+      if (mounted) setState(() {});
+    }, success: success);
+  }
+
+  Future<void> _completeRestore(RestoreSyncDecision decision) async {
+    final workspace = selected;
+    final handle = widget.handles[workspace?.id];
+    if (workspace == null || handle == null) return;
+    final success = context.tr(
+      decision == RestoreSyncDecision.merge
+          ? '恢复内容已与远端安全合并。'
+          : '远端已通过条件写入替换并完成校验。',
+    );
+    await _run(() async {
+      lastSync = await widget.service.completeRestoreSync(
+        handle,
+        workspace,
+        decision,
+        passwordOverride: password.text.isEmpty ? null : password.text,
+      );
+      await _loadSyncData();
+      widget.onVaultChanged();
+      if (mounted) setState(() {});
+    }, success: success);
+  }
+
+  Future<void> _exportDiagnostics() async {
+    final workspace = selected;
+    if (workspace == null) return;
+    final success = context.tr('脱敏诊断已导出。');
+    final path = await widget.service.chooseDiagnosticsExportPath();
+    if (path == null) return;
+    await _run(
+      () => widget.service.exportSyncDiagnostics(workspace.id, path),
+      success: success,
+    );
   }
 
   Future<void> _scanHealth() async {
@@ -386,6 +568,13 @@ class _SettingsPageState extends State<SettingsPage> {
       selectedWorkspaceId = value;
       _loadSyncFields();
       health = null;
+      lastSync = null;
+      conflicts = const [];
+      backups = const [];
+      diagnostics = const [];
+      restorePending = false;
+      attachmentConflict = false;
+      unawaited(_refreshSyncDataSilently());
     }),
   );
 
@@ -454,14 +643,152 @@ class _SettingsPageState extends State<SettingsPage> {
             label: Text(context.tr('保存')),
           ),
           OutlinedButton.icon(
-            onPressed: busy || widget.handles[selectedWorkspaceId] == null
+            onPressed:
+                busy ||
+                    widget.handles[selectedWorkspaceId] == null ||
+                    !widget.service.isVaultWritable(
+                      widget.handles[selectedWorkspaceId]!,
+                    )
                 ? null
                 : _syncNow,
             icon: const Icon(Icons.sync),
             label: Text(context.tr('立即同步')),
           ),
+          OutlinedButton.icon(
+            onPressed: busy || selected == null
+                ? null
+                : () => _run(() async {
+                    await _loadSyncData();
+                    if (mounted) setState(() {});
+                  }),
+            icon: const Icon(Icons.refresh),
+            label: Text(context.tr('刷新同步状态')),
+          ),
         ],
       ),
+      if (lastSync case final result?) ...[
+        const SizedBox(height: 16),
+        Card(
+          child: ListTile(
+            leading: const Icon(Icons.cloud_done_outlined),
+            title: Text(
+              context.tr('同步结果：{action}', {'action': result.action.name}),
+            ),
+            subtitle: Text(
+              context.tr('自动合并 {merged} 项，新增冲突 {created} 个，待处理 {pending} 个。', {
+                'merged': result.autoMergedObjects.toString(),
+                'created': result.createdConflicts.toString(),
+                'pending': result.pendingConflicts.toString(),
+              }),
+            ),
+          ),
+        ),
+      ],
+      const SizedBox(height: 24),
+      Text(context.tr('冲突中心'), style: Theme.of(context).textTheme.titleMedium),
+      const SizedBox(height: 6),
+      if (conflicts.isEmpty)
+        Text(context.tr('没有待处理冲突。'))
+      else
+        for (final conflict in conflicts)
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.call_split_outlined),
+            title: Text(conflict.title),
+            subtitle: Text(conflict.fields.join(' · ')),
+            trailing: TextButton(
+              onPressed: busy ? null : () => _resolveConflict(conflict),
+              child: Text(context.tr('解决')),
+            ),
+          ),
+      const SizedBox(height: 20),
+      Text(context.tr('加密备份'), style: Theme.of(context).textTheme.titleMedium),
+      Text(context.tr('备份保持 KDBX 加密状态，并按 Workspace 独立保存。')),
+      if (restorePending)
+        Card(
+          color: Theme.of(context).colorScheme.tertiaryContainer,
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  context.tr('恢复后的同步正在等待你的决定'),
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+                Text(context.tr('“安全合并”保留双方修改；“替换远端”会先备份远端，并使用 ETag 条件写入。')),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 10,
+                  children: [
+                    FilledButton(
+                      onPressed: busy
+                          ? null
+                          : () => _completeRestore(RestoreSyncDecision.merge),
+                      child: Text(context.tr('安全合并')),
+                    ),
+                    OutlinedButton(
+                      onPressed: busy
+                          ? null
+                          : () => _completeRestore(
+                              RestoreSyncDecision.replaceRemote,
+                            ),
+                      child: Text(context.tr('替换远端')),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      if (attachmentConflict)
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: const Icon(Icons.attachment_outlined),
+          title: Text(context.tr('附件在多端同时发生变化，同步已安全停止。')),
+          subtitle: Text(context.tr('当前版本不会猜测合并附件；请在其中一端撤销附件变化后重试。')),
+        ),
+      for (final backup in backups.take(8))
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: const Icon(Icons.restore_outlined),
+          title: Text(backup.createdAt.toLocal().toString()),
+          subtitle: Text('${backup.origin} · ${backup.encryptedSize} B'),
+          trailing: TextButton(
+            onPressed: busy ? null : () => _restoreBackup(backup),
+            child: Text(context.tr('恢复')),
+          ),
+        ),
+      const SizedBox(height: 20),
+      Text(context.tr('同步诊断'), style: Theme.of(context).textTheme.titleMedium),
+      Text(context.tr('仅记录阶段、错误码、耗时和计数；不包含密码、OTP、URL 或条目内容。')),
+      const SizedBox(height: 8),
+      Wrap(
+        spacing: 10,
+        children: [
+          OutlinedButton.icon(
+            onPressed: busy || selected == null ? null : _exportDiagnostics,
+            icon: const Icon(Icons.file_download_outlined),
+            label: Text(context.tr('导出脱敏诊断')),
+          ),
+          TextButton(
+            onPressed: busy || selected == null
+                ? null
+                : () => _run(() async {
+                    await widget.service.clearSyncDiagnostics(selected!.id);
+                    diagnostics = const [];
+                    if (mounted) setState(() {});
+                  }),
+            child: Text(context.tr('清除诊断')),
+          ),
+        ],
+      ),
+      if (diagnostics.isNotEmpty)
+        Text(
+          context.tr('最近记录：{count} 条', {
+            'count': diagnostics.length.toString(),
+          }),
+        ),
     ],
   );
 
