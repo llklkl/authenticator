@@ -31,6 +31,8 @@ pub enum VaultError {
     KdbxOpen,
     #[error("the KDBX database could not be saved")]
     KdbxSave,
+    #[error("the KDBX database version is read-only")]
+    UnsupportedKdbxWriteVersion,
     #[error("the KDBX database structure is invalid")]
     InvalidKdbx,
     #[error("the vault file could not be read")]
@@ -61,6 +63,14 @@ pub enum VaultError {
     FieldUnavailable,
     #[error("the vault file is already open")]
     VaultAlreadyOpen,
+    #[error("the remote vault is not a replica of this workspace")]
+    RemoteVaultMismatch,
+    #[error("attachment changes cannot yet be merged safely")]
+    AttachmentMergeUnsupported,
+    #[error("the requested synchronization conflict does not exist")]
+    ConflictNotFound,
+    #[error("the synchronization conflict resolution is invalid")]
+    InvalidConflictResolution,
     #[error("quick unlock material is invalid or unavailable")]
     QuickUnlock,
 }

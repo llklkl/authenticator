@@ -11,10 +11,10 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 use crate::{
-    EntrySecretField, KdbxContentSnapshot, KdbxDatabase, KdbxEngine, KdbxEntryRecord,
-    MAX_ATTACHMENT_BYTES, OtpCode, PasswordHealthPolicy, PasswordHealthReport,
-    QuickUnlockEnrollment, Result, VaultEntry, VaultError, prepare_quick_unlock,
-    unseal_quick_unlock,
+    ConflictResolution, EntrySecretField, KdbxContentSnapshot, KdbxDatabase, KdbxEngine,
+    KdbxEntryRecord, KdbxFormat, MAX_ATTACHMENT_BYTES, OtpCode, PasswordHealthPolicy,
+    PasswordHealthReport, QuickUnlockEnrollment, Result, ThreeWayMergeResult, VaultConflict,
+    VaultEntry, VaultError, prepare_quick_unlock, unseal_quick_unlock,
 };
 
 /// An unlocked, file-backed vault. Decrypted contents and the master password stay in Rust.
@@ -116,6 +116,22 @@ impl FileVaultSession {
 
     pub fn entries(&self) -> Vec<KdbxEntryRecord> {
         self.engine.entries(&self.database)
+    }
+
+    pub fn format(&self) -> KdbxFormat {
+        self.engine.format(&self.database)
+    }
+
+    pub fn root_id(&self) -> Uuid {
+        self.engine.root_id(&self.database)
+    }
+
+    pub fn conflicts(&self) -> Vec<VaultConflict> {
+        self.engine.conflicts(&self.database)
+    }
+
+    pub fn resolve_conflict(&mut self, resolution: &ConflictResolution) -> Result<()> {
+        self.mutate(|engine, database| engine.resolve_conflict(database, resolution))
     }
 
     pub fn content_snapshot(&self) -> KdbxContentSnapshot {
@@ -292,6 +308,16 @@ impl FileVaultSession {
         self.engine.merge_encrypted(local, remote, &self.password)
     }
 
+    pub fn three_way_merge_encrypted_snapshots(
+        &self,
+        base: Option<&[u8]>,
+        local: &[u8],
+        remote: &[u8],
+    ) -> Result<ThreeWayMergeResult> {
+        self.engine
+            .three_way_merge_encrypted(base, local, remote, &self.password)
+    }
+
     /// Return the encrypted file for synchronization. No decrypted value is exposed.
     pub fn encrypted_snapshot(&self) -> Result<Zeroizing<Vec<u8>>> {
         let encrypted = Zeroizing::new(fs::read(&self.path).map_err(|_| VaultError::VaultRead)?);
@@ -299,6 +325,16 @@ impl FileVaultSession {
             return Err(VaultError::VaultRead);
         }
         Ok(encrypted)
+    }
+
+    /// Validate an encrypted snapshot with this session key and ensure it belongs
+    /// to the same workspace. The snapshot is never installed by this method.
+    pub fn validate_replica_snapshot(&self, encrypted: &[u8]) -> Result<()> {
+        let database = self.engine.open(encrypted, &self.password)?;
+        if self.engine.root_id(&database) != self.engine.root_id(&self.database) {
+            return Err(VaultError::RemoteVaultMismatch);
+        }
+        Ok(())
     }
 
     /// Install an already-verified synchronized snapshot after validating the vault key.

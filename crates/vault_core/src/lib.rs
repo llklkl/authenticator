@@ -12,10 +12,11 @@ mod workspace;
 pub use entry::{EntryKind, EntrySummary, VaultEntry};
 pub use error::{Result, VaultError};
 pub use kdbx::{
-    EntrySecretField, KdbxAttachmentRecord, KdbxContentSnapshot, KdbxDatabase, KdbxEngine,
-    KdbxEntryRecord, KdbxGroupRecord, KdbxIconRecord, MAX_ATTACHMENT_BYTES,
-    MAX_TOTAL_ATTACHMENT_BYTES, PasswordHealthFinding, PasswordHealthPolicy, PasswordHealthReport,
-    PasswordHealthRisk,
+    ConflictChoice, ConflictField, ConflictKind, ConflictResolution, EntrySecretField,
+    KdbxAttachmentRecord, KdbxContentSnapshot, KdbxDatabase, KdbxEngine, KdbxEntryRecord,
+    KdbxFormat, KdbxGroupRecord, KdbxIconRecord, MAX_ATTACHMENT_BYTES, MAX_TOTAL_ATTACHMENT_BYTES,
+    MergeReport, PasswordHealthFinding, PasswordHealthPolicy, PasswordHealthReport,
+    PasswordHealthRisk, ThreeWayMergeResult, VaultConflict,
 };
 pub use otp::{OtpAlgorithm, OtpCode, OtpConfig, OtpKind};
 pub use password::{

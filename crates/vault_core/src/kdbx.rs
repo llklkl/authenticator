@@ -1,7 +1,12 @@
-use std::{collections::HashMap, fmt, io::Cursor};
+use std::{
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    fmt,
+    io::Cursor,
+};
 
 use keepass::{
     Database, DatabaseKey,
+    config::DatabaseVersion,
     db::{EntryId, GroupId, GroupRef, Icon, Times, Value, fields},
 };
 use sha2::{Digest, Sha256};
@@ -26,6 +31,14 @@ impl Clone for KdbxDatabase {
 const KIND_FIELD: &str = "Authenticator.EntryKind";
 const MODIFIED_AT_FIELD: &str = "Authenticator.ModifiedAtUnixMs";
 const FAVORITE_FIELD: &str = "Authenticator.Favorite";
+const CONFLICT_VERSION_FIELD: &str = "Authenticator.ConflictVersion";
+const CONFLICT_ID_FIELD: &str = "Authenticator.ConflictId";
+const CONFLICT_OF_FIELD: &str = "Authenticator.ConflictOf";
+const CONFLICT_ALTERNATE_FIELD: &str = "Authenticator.ConflictAlternate";
+const CONFLICT_FIELDS_FIELD: &str = "Authenticator.ConflictFields";
+const CONFLICT_KIND_FIELD: &str = "Authenticator.ConflictKind";
+const CONFLICT_DELETED_FIELD: &str = "Authenticator.ConflictDeleted";
+const CONFLICT_GROUP_NAME: &str = "_Authenticator Sync Conflicts";
 pub const MAX_ATTACHMENT_BYTES: usize = 25 * 1024 * 1024;
 pub const MAX_TOTAL_ATTACHMENT_BYTES: usize = 100 * 1024 * 1024;
 
@@ -123,6 +136,80 @@ pub enum EntrySecretField {
     Notes,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KdbxFormat {
+    Kdbx4_1,
+    Kdbx4_0ReadOnly,
+    OtherReadOnly,
+}
+
+impl KdbxFormat {
+    pub fn writable(self) -> bool {
+        matches!(self, Self::Kdbx4_1)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConflictKind {
+    EntryEdit,
+    DeleteEdit,
+    GroupEdit,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConflictField {
+    pub key: String,
+    pub is_protected: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VaultConflict {
+    pub id: Uuid,
+    pub object_id: Uuid,
+    pub alternate_entry_id: Uuid,
+    pub kind: ConflictKind,
+    pub title: String,
+    pub fields: Vec<ConflictField>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConflictChoice {
+    Primary,
+    Alternate,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConflictResolution {
+    pub conflict_id: Uuid,
+    pub default_choice: ConflictChoice,
+    pub field_choices: Vec<(String, ConflictChoice)>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MergeReport {
+    pub auto_merged_objects: u32,
+    pub created_conflicts: Vec<Uuid>,
+    pub pending_conflicts: u32,
+    pub baseline_rebuilt: bool,
+}
+
+pub struct ThreeWayMergeResult {
+    pub encrypted_bytes: Zeroizing<Vec<u8>>,
+    pub report: MergeReport,
+    pub requires_upload: bool,
+}
+
+impl fmt::Debug for ThreeWayMergeResult {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ThreeWayMergeResult")
+            .field("encrypted_bytes", &"[REDACTED]")
+            .field("report", &self.report)
+            .field("requires_upload", &self.requires_upload)
+            .finish()
+    }
+}
+
 /// KDBX 4.1 adapter. Upstream types are deliberately contained in this module.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct KdbxEngine;
@@ -145,7 +232,22 @@ impl KdbxEngine {
         Ok(KdbxDatabase { inner })
     }
 
+    pub fn format(&self, database: &KdbxDatabase) -> KdbxFormat {
+        match database.inner.config.version {
+            DatabaseVersion::KDB4(1) => KdbxFormat::Kdbx4_1,
+            DatabaseVersion::KDB4(0) => KdbxFormat::Kdbx4_0ReadOnly,
+            _ => KdbxFormat::OtherReadOnly,
+        }
+    }
+
+    pub fn root_id(&self, database: &KdbxDatabase) -> Uuid {
+        database.inner.root().id().uuid()
+    }
+
     pub fn save(&self, database: &KdbxDatabase, password: &str) -> Result<Zeroizing<Vec<u8>>> {
+        if !self.format(database).writable() {
+            return Err(VaultError::UnsupportedKdbxWriteVersion);
+        }
         let mut encrypted_bytes = Vec::new();
         let key = DatabaseKey::new().with_password(password);
         database
@@ -782,6 +884,210 @@ impl KdbxEngine {
         Ok(())
     }
 
+    /// Perform a conservative three-way merge. Encrypted attachments never cross the
+    /// public boundary; until upstream can merge their historical references safely,
+    /// any attachment-bearing divergence fails closed before serialization.
+    pub fn three_way_merge_encrypted(
+        &self,
+        base: Option<&[u8]>,
+        local: &[u8],
+        remote: &[u8],
+        password: &str,
+    ) -> Result<ThreeWayMergeResult> {
+        let mut local_db = self.open(local, password)?;
+        let mut remote_db = self.open(remote, password)?;
+        let base_db = base.map(|bytes| self.open(bytes, password)).transpose()?;
+        let root_id = self.root_id(&local_db);
+        if self.root_id(&remote_db) != root_id
+            || base_db
+                .as_ref()
+                .is_some_and(|database| self.root_id(database) != root_id)
+        {
+            return Err(VaultError::RemoteVaultMismatch);
+        }
+        if attachment_merge_is_unsafe(&local_db.inner, &remote_db.inner) {
+            return Err(VaultError::AttachmentMergeUnsupported);
+        }
+
+        if database_payload_equal(&local_db.inner, &remote_db.inner) {
+            return Ok(ThreeWayMergeResult {
+                encrypted_bytes: Zeroizing::new(remote.to_vec()),
+                report: MergeReport {
+                    pending_conflicts: u32::try_from(self.conflicts(&remote_db).len())
+                        .unwrap_or(u32::MAX),
+                    baseline_rebuilt: base_db.is_none(),
+                    ..MergeReport::default()
+                },
+                requires_upload: false,
+            });
+        }
+
+        let decisions = entry_merge_decisions(
+            base_db.as_ref().map(|database| &database.inner),
+            &local_db.inner,
+            &remote_db.inner,
+        );
+        let delete_edit_decisions = delete_edit_decisions(
+            base_db.as_ref().map(|database| &database.inner),
+            &local_db.inner,
+            &remote_db.inner,
+        );
+        for decision in &delete_edit_decisions {
+            local_db
+                .inner
+                .deleted_objects
+                .remove(&decision.entry_id.uuid());
+            remote_db
+                .inner
+                .deleted_objects
+                .remove(&decision.entry_id.uuid());
+        }
+        canonicalize_merge_timestamps(&mut local_db.inner, &mut remote_db.inner);
+        local_db
+            .inner
+            .merge(&remote_db.inner)
+            .map_err(|_| VaultError::InvalidKdbx)?;
+
+        let mut report = MergeReport {
+            baseline_rebuilt: base_db.is_none(),
+            ..MergeReport::default()
+        };
+        for decision in decisions {
+            if !decision.changed {
+                continue;
+            }
+            apply_merged_fields(&mut local_db.inner, decision.entry_id, &decision.fields)?;
+            report.auto_merged_objects = report.auto_merged_objects.saturating_add(1);
+            if !decision.conflicts.is_empty() {
+                let conflict_id = install_entry_conflict(&mut local_db.inner, root_id, &decision)?;
+                report.created_conflicts.push(conflict_id);
+            }
+        }
+        for decision in delete_edit_decisions {
+            let conflict_id =
+                install_delete_edit_conflict(&mut local_db.inner, root_id, decision.entry_id)?;
+            report.auto_merged_objects = report.auto_merged_objects.saturating_add(1);
+            report.created_conflicts.push(conflict_id);
+        }
+        report.pending_conflicts =
+            u32::try_from(self.conflicts(&local_db).len()).unwrap_or(u32::MAX);
+        let encrypted_bytes = self.save(&local_db, password)?;
+        Ok(ThreeWayMergeResult {
+            encrypted_bytes,
+            report,
+            requires_upload: true,
+        })
+    }
+
+    pub fn conflicts(&self, database: &KdbxDatabase) -> Vec<VaultConflict> {
+        database
+            .inner
+            .iter_all_entries()
+            .filter_map(|entry| conflict_from_entry(&entry))
+            .collect()
+    }
+
+    pub fn resolve_conflict(
+        &self,
+        database: &mut KdbxDatabase,
+        resolution: &ConflictResolution,
+    ) -> Result<()> {
+        let conflict = self
+            .conflicts(database)
+            .into_iter()
+            .find(|value| value.id == resolution.conflict_id)
+            .ok_or(VaultError::ConflictNotFound)?;
+        let alternate_id = EntryId::from_uuid(conflict.alternate_entry_id);
+        let original_id = EntryId::from_uuid(conflict.object_id);
+        let alternate_fields = database
+            .inner
+            .entry(alternate_id)
+            .ok_or(VaultError::ConflictNotFound)?
+            .fields
+            .clone();
+        let alternate_is_deletion = alternate_fields
+            .get(CONFLICT_DELETED_FIELD)
+            .is_some_and(|value| value.get() == "true");
+        let primary_fields = database
+            .inner
+            .entry(original_id)
+            .ok_or(VaultError::ConflictNotFound)?
+            .fields
+            .clone();
+        let choices = resolution
+            .field_choices
+            .iter()
+            .cloned()
+            .collect::<HashMap<_, _>>();
+        if alternate_is_deletion {
+            if resolution.default_choice == ConflictChoice::Alternate {
+                database
+                    .inner
+                    .entry_mut(original_id)
+                    .ok_or(VaultError::ConflictNotFound)?
+                    .track_changes()
+                    .remove();
+            } else {
+                let mut original = database
+                    .inner
+                    .entry_mut(original_id)
+                    .ok_or(VaultError::ConflictNotFound)?;
+                let keys = original
+                    .fields
+                    .keys()
+                    .filter(|key| is_conflict_field(key))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                for key in keys {
+                    original.fields.remove(&key);
+                }
+            }
+            database
+                .inner
+                .entry_mut(alternate_id)
+                .ok_or(VaultError::ConflictNotFound)?
+                .track_changes()
+                .remove();
+            return Ok(());
+        }
+        let keys = primary_fields
+            .keys()
+            .chain(alternate_fields.keys())
+            .filter(|key| !is_conflict_field(key))
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        let mut resolved = HashMap::new();
+        for key in keys {
+            let choice = choices
+                .get(&key)
+                .copied()
+                .unwrap_or(resolution.default_choice);
+            let value = match choice {
+                ConflictChoice::Primary => primary_fields.get(&key),
+                ConflictChoice::Alternate => alternate_fields.get(&key),
+            };
+            if let Some(value) = value {
+                resolved.insert(key, value.clone());
+            }
+        }
+        {
+            let mut original = database
+                .inner
+                .entry_mut(original_id)
+                .ok_or(VaultError::ConflictNotFound)?;
+            let mut tracked = original.track_changes();
+            tracked.as_mut().fields = resolved;
+            tracked.times.last_modification = Some(Times::now());
+        }
+        database
+            .inner
+            .entry_mut(alternate_id)
+            .ok_or(VaultError::ConflictNotFound)?
+            .track_changes()
+            .remove();
+        Ok(())
+    }
+
     /// Merge two encrypted replicas and re-encrypt the result with the same key.
     pub fn merge_encrypted(
         &self,
@@ -794,6 +1100,427 @@ impl KdbxEngine {
         self.merge(&mut target, &source)?;
         self.save(&target, password)
     }
+}
+
+struct EntryMergeDecision {
+    entry_id: EntryId,
+    fields: HashMap<String, Value<String>>,
+    alternate_fields: HashMap<String, Value<String>>,
+    conflicts: Vec<ConflictField>,
+    changed: bool,
+}
+
+struct DeleteEditDecision {
+    entry_id: EntryId,
+}
+
+fn delete_edit_decisions(
+    base: Option<&Database>,
+    local: &Database,
+    remote: &Database,
+) -> Vec<DeleteEditDecision> {
+    let Some(base) = base else {
+        return Vec::new();
+    };
+    base.iter_all_entries()
+        .filter_map(|base_entry| {
+            let id = base_entry.id();
+            let local_entry = local.entry(id);
+            let remote_entry = remote.entry(id);
+            let edited = match (&local_entry, &remote_entry) {
+                (Some(local), None) => entry_digest(local) != entry_digest(&base_entry),
+                (None, Some(remote)) => entry_digest(remote) != entry_digest(&base_entry),
+                _ => false,
+            };
+            edited.then_some(DeleteEditDecision { entry_id: id })
+        })
+        .collect()
+}
+
+fn entry_merge_decisions(
+    base: Option<&Database>,
+    local: &Database,
+    remote: &Database,
+) -> Vec<EntryMergeDecision> {
+    let local_ids = local
+        .iter_all_entries()
+        .map(|entry| entry.id())
+        .collect::<HashSet<_>>();
+    let remote_ids = remote
+        .iter_all_entries()
+        .map(|entry| entry.id())
+        .collect::<HashSet<_>>();
+    local_ids
+        .intersection(&remote_ids)
+        .filter_map(|id| {
+            let local_entry = local.entry(*id)?;
+            let remote_entry = remote.entry(*id)?;
+            let base_entry = base.and_then(|database| database.entry(*id));
+            let keys = local_entry
+                .fields
+                .keys()
+                .chain(remote_entry.fields.keys())
+                .chain(base_entry.iter().flat_map(|entry| entry.fields.keys()))
+                .filter(|key| !is_conflict_field(key))
+                .cloned()
+                .collect::<BTreeSet<_>>();
+            let mut fields = HashMap::new();
+            let mut conflicts = Vec::new();
+            for key in keys {
+                let base_value = base_entry.as_ref().and_then(|entry| entry.fields.get(&key));
+                let local_value = local_entry.fields.get(&key);
+                let remote_value = remote_entry.fields.get(&key);
+                let selected = if local_value == remote_value {
+                    local_value
+                } else if base_entry.is_some() && local_value == base_value {
+                    remote_value
+                } else if base_entry.is_some() && remote_value == base_value {
+                    local_value
+                } else {
+                    conflicts.push(ConflictField {
+                        key: key.clone(),
+                        is_protected: local_value
+                            .or(remote_value)
+                            .is_some_and(Value::is_protected),
+                    });
+                    canonical_value(local_value, remote_value)
+                };
+                if let Some(value) = selected {
+                    fields.insert(key, value.clone());
+                }
+            }
+            let local_hash = entry_digest(&local_entry);
+            let remote_hash = entry_digest(&remote_entry);
+            let alternate_fields = if local_hash >= remote_hash {
+                remote_entry.fields.clone()
+            } else {
+                local_entry.fields.clone()
+            };
+            let changed = fields != local_entry.fields || !conflicts.is_empty();
+            Some(EntryMergeDecision {
+                entry_id: *id,
+                fields,
+                alternate_fields,
+                conflicts,
+                changed,
+            })
+        })
+        .collect()
+}
+
+fn canonical_value<'a>(
+    local: Option<&'a Value<String>>,
+    remote: Option<&'a Value<String>>,
+) -> Option<&'a Value<String>> {
+    match (local, remote) {
+        (Some(local), Some(remote)) => {
+            let mut local_hash = Sha256::new();
+            hash_value(&mut local_hash, local);
+            let mut remote_hash = Sha256::new();
+            hash_value(&mut remote_hash, remote);
+            (local_hash.finalize() >= remote_hash.finalize())
+                .then_some(local)
+                .or(Some(remote))
+        }
+        (Some(value), None) | (None, Some(value)) => Some(value),
+        (None, None) => None,
+    }
+}
+
+fn canonicalize_merge_timestamps(local: &mut Database, remote: &mut Database) {
+    let local_hashes = local
+        .iter_all_entries()
+        .map(|entry| (entry.id(), entry_digest(&entry)))
+        .collect::<HashMap<_, _>>();
+    let remote_hashes = remote
+        .iter_all_entries()
+        .map(|entry| (entry.id(), entry_digest(&entry)))
+        .collect::<HashMap<_, _>>();
+    for (id, local_hash) in local_hashes {
+        let Some(remote_hash) = remote_hashes.get(&id) else {
+            continue;
+        };
+        if local_hash == *remote_hash {
+            continue;
+        }
+        let (local_time, remote_time) = if local_hash > *remote_hash {
+            (Times::now(), Times::epoch())
+        } else {
+            (Times::epoch(), Times::now())
+        };
+        if let Some(mut entry) = local.entry_mut(id) {
+            entry.times.last_modification = Some(local_time);
+        }
+        if let Some(mut entry) = remote.entry_mut(id) {
+            entry.times.last_modification = Some(remote_time);
+        }
+    }
+}
+
+fn apply_merged_fields(
+    database: &mut Database,
+    entry_id: EntryId,
+    fields: &HashMap<String, Value<String>>,
+) -> Result<()> {
+    let mut entry = database
+        .entry_mut(entry_id)
+        .ok_or(VaultError::EntryNotFound)?;
+    entry.fields.clone_from(fields);
+    Ok(())
+}
+
+fn install_entry_conflict(
+    database: &mut Database,
+    root_id: Uuid,
+    decision: &EntryMergeDecision,
+) -> Result<Uuid> {
+    let conflict_id = deterministic_uuid(
+        b"authenticator-vault-conflict-v1",
+        &[
+            decision.entry_id.uuid().as_bytes(),
+            &entry_fields_digest(&decision.fields),
+            &entry_fields_digest(&decision.alternate_fields),
+        ],
+    );
+    let alternate_id = deterministic_uuid(
+        b"authenticator-vault-conflict-copy-v1",
+        &[conflict_id.as_bytes()],
+    );
+    let group_id = deterministic_uuid(
+        b"authenticator-vault-conflict-group-v1",
+        &[root_id.as_bytes()],
+    );
+    let group_id = GroupId::from_uuid(group_id);
+    if database.group(group_id).is_none() {
+        let mut root = database.root_mut();
+        let mut group = root
+            .add_group_with_id(group_id)
+            .map_err(|_| VaultError::InvalidKdbx)?;
+        group.name = CONFLICT_GROUP_NAME.to_owned();
+        group.times.last_modification = Some(Times::now());
+    }
+    let encoded_fields = encode_conflict_fields(&decision.conflicts);
+    {
+        let mut original = database
+            .entry_mut(decision.entry_id)
+            .ok_or(VaultError::EntryNotFound)?;
+        original.set_unprotected(CONFLICT_VERSION_FIELD, "1");
+        original.set_unprotected(CONFLICT_ID_FIELD, conflict_id.to_string());
+        original.set_unprotected(CONFLICT_ALTERNATE_FIELD, alternate_id.to_string());
+        original.set_unprotected(CONFLICT_FIELDS_FIELD, &encoded_fields);
+        original.set_unprotected(CONFLICT_KIND_FIELD, "entry_edit");
+    }
+    if database.entry(EntryId::from_uuid(alternate_id)).is_none() {
+        let mut group = database
+            .group_mut(group_id)
+            .ok_or(VaultError::GroupNotFound)?;
+        let mut alternate = group
+            .add_entry_with_id(EntryId::from_uuid(alternate_id))
+            .map_err(|_| VaultError::InvalidKdbx)?;
+        alternate.fields.clone_from(&decision.alternate_fields);
+        alternate.set_unprotected(CONFLICT_VERSION_FIELD, "1");
+        alternate.set_unprotected(CONFLICT_ID_FIELD, conflict_id.to_string());
+        alternate.set_unprotected(CONFLICT_OF_FIELD, decision.entry_id.uuid().to_string());
+        alternate.set_unprotected(CONFLICT_FIELDS_FIELD, encoded_fields);
+        alternate.times.last_modification = Some(Times::now());
+    }
+    Ok(conflict_id)
+}
+
+fn install_delete_edit_conflict(
+    database: &mut Database,
+    root_id: Uuid,
+    entry_id: EntryId,
+) -> Result<Uuid> {
+    let conflict_id = deterministic_uuid(
+        b"authenticator-vault-delete-edit-conflict-v1",
+        &[entry_id.uuid().as_bytes()],
+    );
+    let alternate_id = deterministic_uuid(
+        b"authenticator-vault-delete-edit-conflict-copy-v1",
+        &[conflict_id.as_bytes()],
+    );
+    let group_id = GroupId::from_uuid(deterministic_uuid(
+        b"authenticator-vault-conflict-group-v1",
+        &[root_id.as_bytes()],
+    ));
+    if database.group(group_id).is_none() {
+        let mut root = database.root_mut();
+        let mut group = root
+            .add_group_with_id(group_id)
+            .map_err(|_| VaultError::InvalidKdbx)?;
+        group.name = CONFLICT_GROUP_NAME.to_owned();
+        group.times.last_modification = Some(Times::now());
+    }
+    {
+        let mut original = database
+            .entry_mut(entry_id)
+            .ok_or(VaultError::EntryNotFound)?;
+        original.set_unprotected(CONFLICT_VERSION_FIELD, "1");
+        original.set_unprotected(CONFLICT_ID_FIELD, conflict_id.to_string());
+        original.set_unprotected(CONFLICT_ALTERNATE_FIELD, alternate_id.to_string());
+        original.set_unprotected(CONFLICT_FIELDS_FIELD, "");
+        original.set_unprotected(CONFLICT_KIND_FIELD, "delete_edit");
+    }
+    if database.entry(EntryId::from_uuid(alternate_id)).is_none() {
+        let mut group = database
+            .group_mut(group_id)
+            .ok_or(VaultError::GroupNotFound)?;
+        let mut alternate = group
+            .add_entry_with_id(EntryId::from_uuid(alternate_id))
+            .map_err(|_| VaultError::InvalidKdbx)?;
+        alternate.set_unprotected(fields::TITLE, "Deleted version");
+        alternate.set_unprotected(CONFLICT_VERSION_FIELD, "1");
+        alternate.set_unprotected(CONFLICT_ID_FIELD, conflict_id.to_string());
+        alternate.set_unprotected(CONFLICT_OF_FIELD, entry_id.uuid().to_string());
+        alternate.set_unprotected(CONFLICT_KIND_FIELD, "delete_edit");
+        alternate.set_unprotected(CONFLICT_DELETED_FIELD, "true");
+        alternate.times.last_modification = Some(Times::now());
+    }
+    Ok(conflict_id)
+}
+
+fn conflict_from_entry(entry: &keepass::db::EntryRef<'_>) -> Option<VaultConflict> {
+    let conflict_id = entry.get(CONFLICT_ID_FIELD)?.parse().ok()?;
+    let alternate_entry_id = entry.get(CONFLICT_ALTERNATE_FIELD)?.parse().ok()?;
+    let fields = decode_conflict_fields(entry.get(CONFLICT_FIELDS_FIELD).unwrap_or_default())
+        .into_iter()
+        .map(|key| ConflictField {
+            is_protected: entry.fields.get(&key).is_some_and(Value::is_protected),
+            key,
+        })
+        .collect();
+    Some(VaultConflict {
+        id: conflict_id,
+        object_id: entry.id().uuid(),
+        alternate_entry_id,
+        kind: match entry.get(CONFLICT_KIND_FIELD) {
+            Some("delete_edit") => ConflictKind::DeleteEdit,
+            Some("group_edit") => ConflictKind::GroupEdit,
+            _ => ConflictKind::EntryEdit,
+        },
+        title: entry.get_title().unwrap_or_default().to_owned(),
+        fields,
+    })
+}
+
+fn encode_conflict_fields(fields: &[ConflictField]) -> String {
+    fields
+        .iter()
+        .map(|field| field.key.replace('\\', "\\\\").replace('\n', "\\n"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn decode_conflict_fields(value: &str) -> Vec<String> {
+    value
+        .lines()
+        .map(|line| line.replace("\\n", "\n").replace("\\\\", "\\"))
+        .collect()
+}
+
+fn is_conflict_field(key: &str) -> bool {
+    key.starts_with("Authenticator.Conflict")
+}
+
+fn database_payload_equal(left: &Database, right: &Database) -> bool {
+    left == right
+}
+
+fn attachment_merge_is_unsafe(local: &Database, remote: &Database) -> bool {
+    let local_graph = attachment_graph_digest(local);
+    let remote_graph = attachment_graph_digest(remote);
+    if local_graph != remote_graph {
+        return true;
+    }
+    let local_attached = attached_entry_ids(local);
+    let remote_attached = attached_entry_ids(remote);
+    local_attached
+        .union(&remote_attached)
+        .any(|id| match (local.entry(*id), remote.entry(*id)) {
+            (Some(local), Some(remote)) => entry_digest(&local) != entry_digest(&remote),
+            (None, None) => false,
+            _ => true,
+        })
+}
+
+fn attached_entry_ids(database: &Database) -> HashSet<EntryId> {
+    database
+        .iter_all_entries()
+        .filter(|entry| entry.attachments_named().next().is_some())
+        .map(|entry| entry.id())
+        .collect()
+}
+
+fn attachment_graph_digest(database: &Database) -> [u8; 32] {
+    let mut records = Vec::new();
+    for entry in database.iter_all_entries() {
+        for (name, attachment) in entry.attachments_named() {
+            let mut hasher = Sha256::new();
+            hasher.update(entry.id().uuid().as_bytes());
+            hasher.update(name.as_bytes());
+            hasher.update([u8::from(attachment.data.is_protected())]);
+            hasher.update(attachment.data.get());
+            records.push(hasher.finalize().to_vec());
+        }
+    }
+    records.sort();
+    let mut hasher = Sha256::new();
+    for record in records {
+        hasher.update(record);
+    }
+    hasher.finalize().into()
+}
+
+fn entry_digest(entry: &keepass::db::EntryRef<'_>) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(entry.id().uuid().as_bytes());
+    hasher.update(entry.parent().id().uuid().as_bytes());
+    let fields = entry.fields.iter().collect::<BTreeMap<_, _>>();
+    for (key, value) in fields {
+        hasher.update(key.as_bytes());
+        hash_value(&mut hasher, value);
+    }
+    for tag in &entry.tags {
+        hasher.update(tag.as_bytes());
+        hasher.update([0]);
+    }
+    if let Some(icon) = entry.icon() {
+        match icon {
+            Icon::BuiltIn(id) => hasher.update(id.to_le_bytes()),
+            Icon::Custom(id) => hasher.update(id.uuid().as_bytes()),
+        }
+    }
+    hasher.finalize().into()
+}
+
+fn entry_fields_digest(fields: &HashMap<String, Value<String>>) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    for (key, value) in fields.iter().collect::<BTreeMap<_, _>>() {
+        hasher.update(key.as_bytes());
+        hash_value(&mut hasher, value);
+    }
+    hasher.finalize().into()
+}
+
+fn hash_value(hasher: &mut Sha256, value: &Value<String>) {
+    hasher.update([u8::from(value.is_protected())]);
+    hasher.update(value.get().as_bytes());
+    hasher.update([0]);
+}
+
+fn deterministic_uuid(domain: &[u8], parts: &[&[u8]]) -> Uuid {
+    let mut hasher = Sha256::new();
+    hasher.update(domain);
+    for part in parts {
+        hasher.update(part);
+    }
+    let digest = hasher.finalize();
+    let mut bytes = [0_u8; 16];
+    bytes.copy_from_slice(&digest[..16]);
+    bytes[6] = (bytes[6] & 0x0f) | 0x50;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    Uuid::from_bytes(bytes)
 }
 
 fn collect_groups(
@@ -1044,6 +1771,199 @@ mod tests {
         assert_eq!(records.len(), 2);
         assert!(records.iter().any(|entry| entry.title == "Example"));
         assert!(records.iter().any(|entry| entry.title == "Remote"));
+    }
+
+    #[test]
+    fn three_way_merge_combines_independent_fields_without_a_conflict() {
+        let engine = KdbxEngine;
+        let mut base = engine.create("Personal").unwrap();
+        let entry = sample_entry();
+        engine.add_entry(&mut base, &entry).unwrap();
+        let base_bytes = engine.save(&base, "password").unwrap();
+        let mut local = engine.open(&base_bytes, "password").unwrap();
+        let mut remote = engine.open(&base_bytes, "password").unwrap();
+        local
+            .inner
+            .entry_mut(EntryId::from_uuid(entry.id))
+            .unwrap()
+            .track_changes()
+            .set_unprotected(fields::USERNAME, "local-user");
+        remote
+            .inner
+            .entry_mut(EntryId::from_uuid(entry.id))
+            .unwrap()
+            .track_changes()
+            .set_unprotected(fields::URL, "https://remote.example");
+        let local_bytes = engine.save(&local, "password").unwrap();
+        let remote_bytes = engine.save(&remote, "password").unwrap();
+
+        let result = engine
+            .three_way_merge_encrypted(Some(&base_bytes), &local_bytes, &remote_bytes, "password")
+            .unwrap();
+        assert_eq!(result.report.created_conflicts.len(), 0);
+        assert_eq!(result.report.pending_conflicts, 0);
+        let merged = engine.open(&result.encrypted_bytes, "password").unwrap();
+        let merged_entry = merged.inner.entry(EntryId::from_uuid(entry.id)).unwrap();
+        assert_eq!(merged_entry.get_username(), Some("local-user"));
+        assert_eq!(merged_entry.get_url(), Some("https://remote.example"));
+    }
+
+    #[test]
+    fn three_way_merge_preserves_same_field_conflicts_until_resolved() {
+        let engine = KdbxEngine;
+        let mut base = engine.create("Personal").unwrap();
+        let entry = sample_entry();
+        engine.add_entry(&mut base, &entry).unwrap();
+        let base_bytes = engine.save(&base, "password").unwrap();
+        let mut local = engine.open(&base_bytes, "password").unwrap();
+        let mut remote = engine.open(&base_bytes, "password").unwrap();
+        local
+            .inner
+            .entry_mut(EntryId::from_uuid(entry.id))
+            .unwrap()
+            .track_changes()
+            .set_protected(fields::PASSWORD, "local-password");
+        remote
+            .inner
+            .entry_mut(EntryId::from_uuid(entry.id))
+            .unwrap()
+            .track_changes()
+            .set_protected(fields::PASSWORD, "remote-password");
+        let local_bytes = engine.save(&local, "password").unwrap();
+        let remote_bytes = engine.save(&remote, "password").unwrap();
+
+        let result = engine
+            .three_way_merge_encrypted(Some(&base_bytes), &local_bytes, &remote_bytes, "password")
+            .unwrap();
+        assert_eq!(result.report.created_conflicts.len(), 1);
+        assert_eq!(result.report.pending_conflicts, 1);
+        let mut merged = engine.open(&result.encrypted_bytes, "password").unwrap();
+        let conflict = engine.conflicts(&merged).into_iter().next().unwrap();
+        assert!(
+            conflict
+                .fields
+                .iter()
+                .any(|field| field.key == fields::PASSWORD && field.is_protected)
+        );
+        let alternate = engine
+            .reveal_field(
+                &merged,
+                conflict.alternate_entry_id,
+                EntrySecretField::Password,
+            )
+            .unwrap();
+        engine
+            .resolve_conflict(
+                &mut merged,
+                &ConflictResolution {
+                    conflict_id: conflict.id,
+                    default_choice: ConflictChoice::Alternate,
+                    field_choices: Vec::new(),
+                },
+            )
+            .unwrap();
+        assert!(engine.conflicts(&merged).is_empty());
+        assert_eq!(
+            engine
+                .reveal_field(&merged, entry.id, EntrySecretField::Password)
+                .unwrap()
+                .as_str(),
+            alternate.as_str()
+        );
+    }
+
+    #[test]
+    fn delete_edit_conflict_preserves_the_edit_and_supports_explicit_deletion() {
+        let engine = KdbxEngine;
+        let mut base = engine.create("Personal").unwrap();
+        let entry = sample_entry();
+        engine.add_entry(&mut base, &entry).unwrap();
+        let base_bytes = engine.save(&base, "password").unwrap();
+        let mut local = engine.open(&base_bytes, "password").unwrap();
+        let mut remote = engine.open(&base_bytes, "password").unwrap();
+        local
+            .inner
+            .entry_mut(EntryId::from_uuid(entry.id))
+            .unwrap()
+            .track_changes()
+            .set_unprotected(fields::USERNAME, "edited-user");
+        engine.remove_entry(&mut remote, entry.id).unwrap();
+        let local_bytes = engine.save(&local, "password").unwrap();
+        let remote_bytes = engine.save(&remote, "password").unwrap();
+
+        let result = engine
+            .three_way_merge_encrypted(Some(&base_bytes), &local_bytes, &remote_bytes, "password")
+            .unwrap();
+        let mut merged = engine.open(&result.encrypted_bytes, "password").unwrap();
+        let conflict = engine.conflicts(&merged).into_iter().next().unwrap();
+        assert_eq!(conflict.kind, ConflictKind::DeleteEdit);
+        assert_eq!(
+            merged
+                .inner
+                .entry(EntryId::from_uuid(entry.id))
+                .unwrap()
+                .get_username(),
+            Some("edited-user")
+        );
+        engine
+            .resolve_conflict(
+                &mut merged,
+                &ConflictResolution {
+                    conflict_id: conflict.id,
+                    default_choice: ConflictChoice::Alternate,
+                    field_choices: Vec::new(),
+                },
+            )
+            .unwrap();
+        assert!(merged.inner.entry(EntryId::from_uuid(entry.id)).is_none());
+        assert!(engine.conflicts(&merged).is_empty());
+    }
+
+    #[test]
+    fn three_way_merge_rejects_other_workspaces_and_attachment_divergence() {
+        let engine = KdbxEngine;
+        let mut base = engine.create("Personal").unwrap();
+        let entry = sample_entry();
+        engine.add_entry(&mut base, &entry).unwrap();
+        let base_bytes = engine.save(&base, "password").unwrap();
+        let mut local = engine.open(&base_bytes, "password").unwrap();
+        engine
+            .add_attachment(&mut local, entry.id, "changed.bin", vec![1, 2, 3], false)
+            .unwrap();
+        let local_bytes = engine.save(&local, "password").unwrap();
+        assert!(matches!(
+            engine.three_way_merge_encrypted(
+                Some(&base_bytes),
+                &local_bytes,
+                &base_bytes,
+                "password",
+            ),
+            Err(VaultError::AttachmentMergeUnsupported)
+        ));
+
+        let other = engine.create("Other").unwrap();
+        let other_bytes = engine.save(&other, "password").unwrap();
+        assert!(matches!(
+            engine.three_way_merge_encrypted(
+                Some(&base_bytes),
+                &base_bytes,
+                &other_bytes,
+                "password",
+            ),
+            Err(VaultError::RemoteVaultMismatch)
+        ));
+    }
+
+    #[test]
+    fn marks_kdbx_4_0_read_only_without_upgrading_it() {
+        let engine = KdbxEngine;
+        let mut database = engine.create("Legacy").unwrap();
+        database.inner.config.version = DatabaseVersion::KDB4(0);
+        assert_eq!(engine.format(&database), KdbxFormat::Kdbx4_0ReadOnly);
+        assert_eq!(
+            engine.save(&database, "password"),
+            Err(VaultError::UnsupportedKdbxWriteVersion)
+        );
     }
 
     #[test]
