@@ -25,7 +25,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   String dco_decode_String(dynamic raw);
 
   @protected
+  BackupOriginView dco_decode_backup_origin_view(dynamic raw);
+
+  @protected
   bool dco_decode_bool(dynamic raw);
+
+  @protected
+  PlatformInt64 dco_decode_box_autoadd_i_64(dynamic raw);
 
   @protected
   int dco_decode_box_autoadd_u_32(dynamic raw);
@@ -38,6 +44,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   BridgeError dco_decode_bridge_error(dynamic raw);
+
+  @protected
+  ConflictChoiceView dco_decode_conflict_choice_view(dynamic raw);
+
+  @protected
+  ConflictFieldChoiceInput dco_decode_conflict_field_choice_input(dynamic raw);
+
+  @protected
+  ConflictFieldView dco_decode_conflict_field_view(dynamic raw);
+
+  @protected
+  ConflictKindView dco_decode_conflict_kind_view(dynamic raw);
 
   @protected
   GeneratedPasswordView dco_decode_generated_password_view(dynamic raw);
@@ -58,6 +76,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<String> dco_decode_list_String(dynamic raw);
 
   @protected
+  List<ConflictFieldChoiceInput> dco_decode_list_conflict_field_choice_input(
+    dynamic raw,
+  );
+
+  @protected
+  List<ConflictFieldView> dco_decode_list_conflict_field_view(dynamic raw);
+
+  @protected
   List<HealthFindingView> dco_decode_list_health_finding_view(dynamic raw);
 
   @protected
@@ -76,6 +102,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<QuickUnlockRequest> dco_decode_list_quick_unlock_request(dynamic raw);
 
   @protected
+  List<SyncBackupView> dco_decode_list_sync_backup_view(dynamic raw);
+
+  @protected
+  List<SyncConflictView> dco_decode_list_sync_conflict_view(dynamic raw);
+
+  @protected
+  List<SyncDiagnosticView> dco_decode_list_sync_diagnostic_view(dynamic raw);
+
+  @protected
   List<VaultAttachmentView> dco_decode_list_vault_attachment_view(dynamic raw);
 
   @protected
@@ -86,6 +121,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   String? dco_decode_opt_String(dynamic raw);
+
+  @protected
+  PlatformInt64? dco_decode_opt_box_autoadd_i_64(dynamic raw);
 
   @protected
   int? dco_decode_opt_box_autoadd_u_32(dynamic raw);
@@ -118,10 +156,28 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   QuickUnlockRequest dco_decode_quick_unlock_request(dynamic raw);
 
   @protected
+  RestoreDecisionView dco_decode_restore_decision_view(dynamic raw);
+
+  @protected
   SensitiveField dco_decode_sensitive_field(dynamic raw);
 
   @protected
+  SyncActionView dco_decode_sync_action_view(dynamic raw);
+
+  @protected
+  SyncBackupView dco_decode_sync_backup_view(dynamic raw);
+
+  @protected
+  SyncConflictView dco_decode_sync_conflict_view(dynamic raw);
+
+  @protected
+  SyncDiagnosticView dco_decode_sync_diagnostic_view(dynamic raw);
+
+  @protected
   SyncResult dco_decode_sync_result(dynamic raw);
+
+  @protected
+  SyncStateView dco_decode_sync_state_view(dynamic raw);
 
   @protected
   int dco_decode_u_32(dynamic raw);
@@ -151,6 +207,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   VaultEntryView dco_decode_vault_entry_view(dynamic raw);
 
   @protected
+  VaultFormatView dco_decode_vault_format_view(dynamic raw);
+
+  @protected
   VaultGroupView dco_decode_vault_group_view(dynamic raw);
 
   @protected
@@ -166,7 +225,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   String sse_decode_String(SseDeserializer deserializer);
 
   @protected
+  BackupOriginView sse_decode_backup_origin_view(SseDeserializer deserializer);
+
+  @protected
   bool sse_decode_bool(SseDeserializer deserializer);
+
+  @protected
+  PlatformInt64 sse_decode_box_autoadd_i_64(SseDeserializer deserializer);
 
   @protected
   int sse_decode_box_autoadd_u_32(SseDeserializer deserializer);
@@ -181,6 +246,24 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   BridgeError sse_decode_bridge_error(SseDeserializer deserializer);
+
+  @protected
+  ConflictChoiceView sse_decode_conflict_choice_view(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  ConflictFieldChoiceInput sse_decode_conflict_field_choice_input(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  ConflictFieldView sse_decode_conflict_field_view(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  ConflictKindView sse_decode_conflict_kind_view(SseDeserializer deserializer);
 
   @protected
   GeneratedPasswordView sse_decode_generated_password_view(
@@ -203,6 +286,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<String> sse_decode_list_String(SseDeserializer deserializer);
+
+  @protected
+  List<ConflictFieldChoiceInput> sse_decode_list_conflict_field_choice_input(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<ConflictFieldView> sse_decode_list_conflict_field_view(
+    SseDeserializer deserializer,
+  );
 
   @protected
   List<HealthFindingView> sse_decode_list_health_finding_view(
@@ -231,6 +324,21 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  List<SyncBackupView> sse_decode_list_sync_backup_view(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<SyncConflictView> sse_decode_list_sync_conflict_view(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<SyncDiagnosticView> sse_decode_list_sync_diagnostic_view(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   List<VaultAttachmentView> sse_decode_list_vault_attachment_view(
     SseDeserializer deserializer,
   );
@@ -247,6 +355,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   String? sse_decode_opt_String(SseDeserializer deserializer);
+
+  @protected
+  PlatformInt64? sse_decode_opt_box_autoadd_i_64(SseDeserializer deserializer);
 
   @protected
   int? sse_decode_opt_box_autoadd_u_32(SseDeserializer deserializer);
@@ -289,10 +400,32 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  RestoreDecisionView sse_decode_restore_decision_view(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   SensitiveField sse_decode_sensitive_field(SseDeserializer deserializer);
 
   @protected
+  SyncActionView sse_decode_sync_action_view(SseDeserializer deserializer);
+
+  @protected
+  SyncBackupView sse_decode_sync_backup_view(SseDeserializer deserializer);
+
+  @protected
+  SyncConflictView sse_decode_sync_conflict_view(SseDeserializer deserializer);
+
+  @protected
+  SyncDiagnosticView sse_decode_sync_diagnostic_view(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   SyncResult sse_decode_sync_result(SseDeserializer deserializer);
+
+  @protected
+  SyncStateView sse_decode_sync_state_view(SseDeserializer deserializer);
 
   @protected
   int sse_decode_u_32(SseDeserializer deserializer);
@@ -326,6 +459,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   VaultEntryView sse_decode_vault_entry_view(SseDeserializer deserializer);
 
   @protected
+  VaultFormatView sse_decode_vault_format_view(SseDeserializer deserializer);
+
+  @protected
   VaultGroupView sse_decode_vault_group_view(SseDeserializer deserializer);
 
   @protected
@@ -341,7 +477,19 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_String(String self, SseSerializer serializer);
 
   @protected
+  void sse_encode_backup_origin_view(
+    BackupOriginView self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_bool(bool self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_i_64(
+    PlatformInt64 self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_box_autoadd_u_32(int self, SseSerializer serializer);
@@ -357,6 +505,30 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_bridge_error(BridgeError self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_conflict_choice_view(
+    ConflictChoiceView self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_conflict_field_choice_input(
+    ConflictFieldChoiceInput self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_conflict_field_view(
+    ConflictFieldView self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_conflict_kind_view(
+    ConflictKindView self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_generated_password_view(
@@ -384,6 +556,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_list_String(List<String> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_conflict_field_choice_input(
+    List<ConflictFieldChoiceInput> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_conflict_field_view(
+    List<ConflictFieldView> self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_list_health_finding_view(
@@ -419,6 +603,24 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_sync_backup_view(
+    List<SyncBackupView> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_sync_conflict_view(
+    List<SyncConflictView> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_sync_diagnostic_view(
+    List<SyncDiagnosticView> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_vault_attachment_view(
     List<VaultAttachmentView> self,
     SseSerializer serializer,
@@ -438,6 +640,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_opt_String(String? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_box_autoadd_i_64(
+    PlatformInt64? self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_opt_box_autoadd_u_32(int? self, SseSerializer serializer);
@@ -488,13 +696,46 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_restore_decision_view(
+    RestoreDecisionView self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_sensitive_field(
     SensitiveField self,
     SseSerializer serializer,
   );
 
   @protected
+  void sse_encode_sync_action_view(
+    SyncActionView self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_sync_backup_view(
+    SyncBackupView self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_sync_conflict_view(
+    SyncConflictView self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_sync_diagnostic_view(
+    SyncDiagnosticView self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_sync_result(SyncResult self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_sync_state_view(SyncStateView self, SseSerializer serializer);
 
   @protected
   void sse_encode_u_32(int self, SseSerializer serializer);
@@ -535,6 +776,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_vault_entry_view(
     VaultEntryView self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_vault_format_view(
+    VaultFormatView self,
     SseSerializer serializer,
   );
 

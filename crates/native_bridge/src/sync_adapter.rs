@@ -1,6 +1,6 @@
 use std::fmt;
 
-use sync_core::{Result, SyncError, VaultMerger};
+use sync_core::{MergeOutput, MergeReport, Result, SyncError, VaultMerger};
 use vault_core::KdbxEngine;
 use zeroize::Zeroizing;
 
@@ -27,10 +27,31 @@ impl fmt::Debug for KdbxVaultMerger {
 }
 
 impl VaultMerger for KdbxVaultMerger {
-    fn merge(&self, local: &[u8], remote: &[u8]) -> Result<Zeroizing<Vec<u8>>> {
-        KdbxEngine
-            .merge_encrypted(local, remote, &self.password)
-            .map_err(|_| SyncError::Merge)
+    fn merge(&self, base: Option<&[u8]>, local: &[u8], remote: &[u8]) -> Result<MergeOutput> {
+        let output = KdbxEngine
+            .three_way_merge_encrypted(base, local, remote, &self.password)
+            .map_err(map_vault_merge_error)?;
+        Ok(MergeOutput {
+            encrypted_bytes: output.encrypted_bytes,
+            report: MergeReport {
+                auto_merged_objects: output.report.auto_merged_objects,
+                created_conflicts: u32::try_from(output.report.created_conflicts.len())
+                    .unwrap_or(u32::MAX),
+                pending_conflicts: output.report.pending_conflicts,
+                baseline_rebuilt: output.report.baseline_rebuilt,
+            },
+            requires_upload: output.requires_upload,
+        })
+    }
+}
+
+fn map_vault_merge_error(error: vault_core::VaultError) -> SyncError {
+    match error {
+        vault_core::VaultError::RemoteVaultMismatch => SyncError::RemoteVaultMismatch,
+        vault_core::VaultError::AttachmentMergeUnsupported => {
+            SyncError::AttachmentConflictUnsupported
+        }
+        _ => SyncError::Merge,
     }
 }
 

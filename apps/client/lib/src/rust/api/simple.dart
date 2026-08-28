@@ -7,9 +7,9 @@ import '../frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `attachment_view`, `ensure_path_available`, `entry_view`, `get_vault`, `icon_view`, `insert_vault_session`, `into_entry`, `parse_uuid`, `path_identity`, `read_vault_sessions`, `with_vault_mut`, `write_vault_sessions`
+// These functions are ignored because they are not marked as `pub`: `attachment_view`, `ensure_path_available`, `entry_view`, `get_vault`, `icon_view`, `insert_vault_session`, `into_entry`, `map_vault_merge_error`, `parse_uuid`, `path_identity`, `read_vault_sessions`, `replace_remote_after_restore`, `sync_error_code`, `with_vault_mut`, `writable`, `write_vault_sessions`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `OtpSessions`, `SessionVaultMerger`, `VaultSessions`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `merge`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `merge`
 // These functions are ignored (category: IgnoreBecauseOwnerTyShouldIgnore): `default`, `default`
 
 /// Create and unlock a new KDBX workspace. Existing files are never overwritten.
@@ -389,6 +389,84 @@ Future<SyncResult> syncWebdav({
   backupDirectory: backupDirectory,
 );
 
+/// Complete a restore with an explicit user choice. Merge re-enters the normal
+/// three-way flow; replace uses a conditional write and verifies the committed
+/// ciphertext so a concurrent remote update is never silently overwritten.
+Future<SyncResult> completeRestoreWebdav({
+  required BigInt handleId,
+  required String endpoint,
+  required String username,
+  required String password,
+  required bool allowInsecureHttp,
+  required String stateDirectory,
+  required RestoreDecisionView decision,
+}) => RustLib.instance.api.crateApiSimpleCompleteRestoreWebdav(
+  handleId: handleId,
+  endpoint: endpoint,
+  username: username,
+  password: password,
+  allowInsecureHttp: allowInsecureHttp,
+  stateDirectory: stateDirectory,
+  decision: decision,
+);
+
+Future<List<SyncConflictView>> listSyncConflicts({required BigInt handleId}) =>
+    RustLib.instance.api.crateApiSimpleListSyncConflicts(handleId: handleId);
+
+Future<void> resolveSyncConflict({
+  required BigInt handleId,
+  required String conflictId,
+  required ConflictChoiceView defaultChoice,
+  required List<ConflictFieldChoiceInput> fieldChoices,
+}) => RustLib.instance.api.crateApiSimpleResolveSyncConflict(
+  handleId: handleId,
+  conflictId: conflictId,
+  defaultChoice: defaultChoice,
+  fieldChoices: fieldChoices,
+);
+
+Future<List<SyncBackupView>> listSyncBackups({
+  required BigInt handleId,
+  required String stateDirectory,
+}) => RustLib.instance.api.crateApiSimpleListSyncBackups(
+  handleId: handleId,
+  stateDirectory: stateDirectory,
+);
+
+Future<void> restoreSyncBackup({
+  required BigInt handleId,
+  required String stateDirectory,
+  required String backupId,
+}) => RustLib.instance.api.crateApiSimpleRestoreSyncBackup(
+  handleId: handleId,
+  stateDirectory: stateDirectory,
+  backupId: backupId,
+);
+
+Future<List<SyncDiagnosticView>> listSyncDiagnostics({
+  required String stateDirectory,
+}) => RustLib.instance.api.crateApiSimpleListSyncDiagnostics(
+  stateDirectory: stateDirectory,
+);
+
+Future<SyncStateView> syncState({required String stateDirectory}) => RustLib
+    .instance
+    .api
+    .crateApiSimpleSyncState(stateDirectory: stateDirectory);
+
+Future<void> exportSyncDiagnostics({
+  required String stateDirectory,
+  required String destinationPath,
+}) => RustLib.instance.api.crateApiSimpleExportSyncDiagnostics(
+  stateDirectory: stateDirectory,
+  destinationPath: destinationPath,
+);
+
+Future<void> clearSyncDiagnostics({required String stateDirectory}) => RustLib
+    .instance
+    .api
+    .crateApiSimpleClearSyncDiagnostics(stateDirectory: stateDirectory);
+
 /// Legacy ephemeral OTP import retained for the locked-vault preview flow.
 OtpHandle importOtpUri({required String uri}) =>
     RustLib.instance.api.crateApiSimpleImportOtpUri(uri: uri);
@@ -403,6 +481,13 @@ OtpPreview currentOtp({
 
 void removeOtp({required BigInt handleId}) =>
     RustLib.instance.api.crateApiSimpleRemoveOtp(handleId: handleId);
+
+enum BackupOriginView {
+  remoteBeforeMerge,
+  localBeforeInstall,
+  localBeforeRestore,
+  legacy,
+}
 
 enum BridgeError {
   invalidInput,
@@ -426,8 +511,58 @@ enum BridgeError {
   fileWrite,
   sessionUnavailable,
   syncFailed,
+  unsupportedVaultWriteVersion,
+  syncConditionalWritesUnsupported,
+  syncRemoteVaultMismatch,
+  syncAttachmentConflictUnsupported,
+  syncBackupFailed,
+  syncVerificationFailed,
+  syncRetryLimitReached,
+  syncStateFailed,
+  syncDiagnosticsFailed,
+  syncRestoreDecisionRequired,
   quickUnlockFailed,
 }
+
+enum ConflictChoiceView { primary, alternate }
+
+class ConflictFieldChoiceInput {
+  final String key;
+  final ConflictChoiceView choice;
+
+  const ConflictFieldChoiceInput({required this.key, required this.choice});
+
+  @override
+  int get hashCode => key.hashCode ^ choice.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ConflictFieldChoiceInput &&
+          runtimeType == other.runtimeType &&
+          key == other.key &&
+          choice == other.choice;
+}
+
+class ConflictFieldView {
+  final String key;
+  final bool isProtected;
+
+  const ConflictFieldView({required this.key, required this.isProtected});
+
+  @override
+  int get hashCode => key.hashCode ^ isProtected.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ConflictFieldView &&
+          runtimeType == other.runtimeType &&
+          key == other.key &&
+          isProtected == other.isProtected;
+}
+
+enum ConflictKindView { entryEdit, deleteEdit, groupEdit }
 
 class GeneratedPasswordView {
   final String value;
@@ -577,11 +712,22 @@ class QuickUnlockEnrollment {
 class QuickUnlockOpened {
   final String workspaceId;
   final BigInt handleId;
+  final VaultFormatView format;
+  final bool writable;
 
-  const QuickUnlockOpened({required this.workspaceId, required this.handleId});
+  const QuickUnlockOpened({
+    required this.workspaceId,
+    required this.handleId,
+    required this.format,
+    required this.writable,
+  });
 
   @override
-  int get hashCode => workspaceId.hashCode ^ handleId.hashCode;
+  int get hashCode =>
+      workspaceId.hashCode ^
+      handleId.hashCode ^
+      format.hashCode ^
+      writable.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -589,7 +735,9 @@ class QuickUnlockOpened {
       other is QuickUnlockOpened &&
           runtimeType == other.runtimeType &&
           workspaceId == other.workspaceId &&
-          handleId == other.handleId;
+          handleId == other.handleId &&
+          format == other.format &&
+          writable == other.writable;
 }
 
 class QuickUnlockRequest {
@@ -616,16 +764,161 @@ class QuickUnlockRequest {
           envelope == other.envelope;
 }
 
+enum RestoreDecisionView { merge, replaceRemote }
+
 enum SensitiveField { password, notes }
+
+enum SyncActionView { createdRemote, uploaded, downloaded, merged, unchanged }
+
+class SyncBackupView {
+  final String id;
+  final PlatformInt64 createdAtUnixMs;
+  final BigInt encryptedSize;
+  final BackupOriginView origin;
+
+  const SyncBackupView({
+    required this.id,
+    required this.createdAtUnixMs,
+    required this.encryptedSize,
+    required this.origin,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^
+      createdAtUnixMs.hashCode ^
+      encryptedSize.hashCode ^
+      origin.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is SyncBackupView &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          createdAtUnixMs == other.createdAtUnixMs &&
+          encryptedSize == other.encryptedSize &&
+          origin == other.origin;
+}
+
+class SyncConflictView {
+  final String id;
+  final String objectId;
+  final String alternateEntryId;
+  final ConflictKindView kind;
+  final String title;
+  final List<ConflictFieldView> fields;
+
+  const SyncConflictView({
+    required this.id,
+    required this.objectId,
+    required this.alternateEntryId,
+    required this.kind,
+    required this.title,
+    required this.fields,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^
+      objectId.hashCode ^
+      alternateEntryId.hashCode ^
+      kind.hashCode ^
+      title.hashCode ^
+      fields.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is SyncConflictView &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          objectId == other.objectId &&
+          alternateEntryId == other.alternateEntryId &&
+          kind == other.kind &&
+          title == other.title &&
+          fields == other.fields;
+}
+
+class SyncDiagnosticView {
+  final PlatformInt64 timestampUnixMs;
+  final String stage;
+  final String outcome;
+  final String? errorCode;
+  final int attempts;
+  final BigInt durationMs;
+  final int autoMergedObjects;
+  final int createdConflicts;
+  final int pendingConflicts;
+
+  const SyncDiagnosticView({
+    required this.timestampUnixMs,
+    required this.stage,
+    required this.outcome,
+    this.errorCode,
+    required this.attempts,
+    required this.durationMs,
+    required this.autoMergedObjects,
+    required this.createdConflicts,
+    required this.pendingConflicts,
+  });
+
+  @override
+  int get hashCode =>
+      timestampUnixMs.hashCode ^
+      stage.hashCode ^
+      outcome.hashCode ^
+      errorCode.hashCode ^
+      attempts.hashCode ^
+      durationMs.hashCode ^
+      autoMergedObjects.hashCode ^
+      createdConflicts.hashCode ^
+      pendingConflicts.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is SyncDiagnosticView &&
+          runtimeType == other.runtimeType &&
+          timestampUnixMs == other.timestampUnixMs &&
+          stage == other.stage &&
+          outcome == other.outcome &&
+          errorCode == other.errorCode &&
+          attempts == other.attempts &&
+          durationMs == other.durationMs &&
+          autoMergedObjects == other.autoMergedObjects &&
+          createdConflicts == other.createdConflicts &&
+          pendingConflicts == other.pendingConflicts;
+}
 
 class SyncResult {
   final int attempts;
   final bool merged;
+  final SyncActionView action;
+  final int autoMergedObjects;
+  final int createdConflicts;
+  final int pendingConflicts;
+  final bool baselineRebuilt;
 
-  const SyncResult({required this.attempts, required this.merged});
+  const SyncResult({
+    required this.attempts,
+    required this.merged,
+    required this.action,
+    required this.autoMergedObjects,
+    required this.createdConflicts,
+    required this.pendingConflicts,
+    required this.baselineRebuilt,
+  });
 
   @override
-  int get hashCode => attempts.hashCode ^ merged.hashCode;
+  int get hashCode =>
+      attempts.hashCode ^
+      merged.hashCode ^
+      action.hashCode ^
+      autoMergedObjects.hashCode ^
+      createdConflicts.hashCode ^
+      pendingConflicts.hashCode ^
+      baselineRebuilt.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -633,7 +926,47 @@ class SyncResult {
       other is SyncResult &&
           runtimeType == other.runtimeType &&
           attempts == other.attempts &&
-          merged == other.merged;
+          merged == other.merged &&
+          action == other.action &&
+          autoMergedObjects == other.autoMergedObjects &&
+          createdConflicts == other.createdConflicts &&
+          pendingConflicts == other.pendingConflicts &&
+          baselineRebuilt == other.baselineRebuilt;
+}
+
+class SyncStateView {
+  final PlatformInt64? lastSuccessUnixMs;
+  final String? lastAction;
+  final int pendingConflicts;
+  final bool restorePending;
+  final bool attachmentConflict;
+
+  const SyncStateView({
+    this.lastSuccessUnixMs,
+    this.lastAction,
+    required this.pendingConflicts,
+    required this.restorePending,
+    required this.attachmentConflict,
+  });
+
+  @override
+  int get hashCode =>
+      lastSuccessUnixMs.hashCode ^
+      lastAction.hashCode ^
+      pendingConflicts.hashCode ^
+      restorePending.hashCode ^
+      attachmentConflict.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is SyncStateView &&
+          runtimeType == other.runtimeType &&
+          lastSuccessUnixMs == other.lastSuccessUnixMs &&
+          lastAction == other.lastAction &&
+          pendingConflicts == other.pendingConflicts &&
+          restorePending == other.restorePending &&
+          attachmentConflict == other.attachmentConflict;
 }
 
 class VaultAttachmentView {
@@ -825,6 +1158,8 @@ class VaultEntryView {
           isFavorite == other.isFavorite;
 }
 
+enum VaultFormatView { kdbx41, kdbx40ReadOnly, otherReadOnly }
+
 class VaultGroupView {
   final String id;
   final String? parentId;
@@ -866,18 +1201,26 @@ class VaultGroupView {
 
 class VaultHandle {
   final BigInt id;
+  final VaultFormatView format;
+  final bool writable;
 
-  const VaultHandle({required this.id});
+  const VaultHandle({
+    required this.id,
+    required this.format,
+    required this.writable,
+  });
 
   @override
-  int get hashCode => id.hashCode;
+  int get hashCode => id.hashCode ^ format.hashCode ^ writable.hashCode;
 
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
       other is VaultHandle &&
           runtimeType == other.runtimeType &&
-          id == other.id;
+          id == other.id &&
+          format == other.format &&
+          writable == other.writable;
 }
 
 enum VaultIconKind { none, builtIn, custom }

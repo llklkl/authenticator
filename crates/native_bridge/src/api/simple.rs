@@ -3,14 +3,20 @@ use std::{
     fmt,
     path::{Path, PathBuf},
     sync::{Arc, LazyLock, Mutex, RwLock},
+    time::Instant,
 };
 
 use flutter_rust_bridge::frb;
-use sync_core::{FileBackupStore, SyncEngine, SyncError, VaultMerger, WebDavProvider};
+use sync_core::{
+    BackupOrigin, ConditionalUpload, DiagnosticEvent, FileBackupStore, FileSyncStateStore,
+    MergeOutput, MergeReport as SyncMergeReport, SyncAction, SyncEngine, SyncError, SyncProvider,
+    SyncSuspension, VaultMerger, WebDavProvider,
+};
 use uuid::Uuid;
 use vault_core::{
-    DEFAULT_PASSWORD_SYMBOLS, EntryKind, EntrySecretField, FileVaultSession, KdbxAttachmentRecord,
-    KdbxIconRecord, OtpConfig, PasswordGeneratorRequest, PasswordHealthPolicy, PasswordHealthRisk,
+    ConflictChoice, ConflictKind, ConflictResolution, DEFAULT_PASSWORD_SYMBOLS, EntryKind,
+    EntrySecretField, FileVaultSession, KdbxAttachmentRecord, KdbxFormat, KdbxIconRecord,
+    OtpConfig, PasswordGeneratorRequest, PasswordHealthPolicy, PasswordHealthRisk, VaultConflict,
     VaultEntry, VaultError, generate_password, normalize_symbol_characters, quick_unlock_key,
     remove_quick_unlock,
 };
@@ -53,6 +59,21 @@ pub struct OtpPreview {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VaultHandle {
     pub id: u64,
+    pub format: VaultFormatView,
+    pub writable: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VaultFormatView {
+    Kdbx4_1,
+    Kdbx4_0ReadOnly,
+    OtherReadOnly,
+}
+
+impl VaultFormatView {
+    fn writable(self) -> bool {
+        matches!(self, Self::Kdbx4_1)
+    }
 }
 
 pub struct QuickUnlockEnrollment {
@@ -92,6 +113,8 @@ impl fmt::Debug for QuickUnlockRequest {
 pub struct QuickUnlockOpened {
     pub workspace_id: String,
     pub handle_id: u64,
+    pub format: VaultFormatView,
+    pub writable: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -264,13 +287,116 @@ pub enum BridgeError {
     FileWrite,
     SessionUnavailable,
     SyncFailed,
+    UnsupportedVaultWriteVersion,
+    SyncConditionalWritesUnsupported,
+    SyncRemoteVaultMismatch,
+    SyncAttachmentConflictUnsupported,
+    SyncBackupFailed,
+    SyncVerificationFailed,
+    SyncRetryLimitReached,
+    SyncStateFailed,
+    SyncDiagnosticsFailed,
+    SyncRestoreDecisionRequired,
     QuickUnlockFailed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyncActionView {
+    CreatedRemote,
+    Uploaded,
+    Downloaded,
+    Merged,
+    Unchanged,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RestoreDecisionView {
+    Merge,
+    ReplaceRemote,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SyncResult {
     pub attempts: u32,
     pub merged: bool,
+    pub action: SyncActionView,
+    pub auto_merged_objects: u32,
+    pub created_conflicts: u32,
+    pub pending_conflicts: u32,
+    pub baseline_rebuilt: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConflictKindView {
+    EntryEdit,
+    DeleteEdit,
+    GroupEdit,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConflictFieldView {
+    pub key: String,
+    pub is_protected: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SyncConflictView {
+    pub id: String,
+    pub object_id: String,
+    pub alternate_entry_id: String,
+    pub kind: ConflictKindView,
+    pub title: String,
+    pub fields: Vec<ConflictFieldView>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConflictChoiceView {
+    Primary,
+    Alternate,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConflictFieldChoiceInput {
+    pub key: String,
+    pub choice: ConflictChoiceView,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackupOriginView {
+    RemoteBeforeMerge,
+    LocalBeforeInstall,
+    LocalBeforeRestore,
+    Legacy,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SyncBackupView {
+    pub id: String,
+    pub created_at_unix_ms: i64,
+    pub encrypted_size: u64,
+    pub origin: BackupOriginView,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SyncDiagnosticView {
+    pub timestamp_unix_ms: i64,
+    pub stage: String,
+    pub outcome: String,
+    pub error_code: Option<String>,
+    pub attempts: u32,
+    pub duration_ms: u64,
+    pub auto_merged_objects: u32,
+    pub created_conflicts: u32,
+    pub pending_conflicts: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SyncStateView {
+    pub last_success_unix_ms: Option<i64>,
+    pub last_action: Option<String>,
+    pub pending_conflicts: u32,
+    pub restore_pending: bool,
+    pub attachment_conflict: bool,
 }
 
 /// Create and unlock a new KDBX workspace. Existing files are never overwritten.
@@ -382,6 +508,8 @@ pub fn open_vaults_with_quick_unlock(
             Ok::<_, BridgeError>(QuickUnlockOpened {
                 workspace_id: request.workspace_id.clone(),
                 handle_id: handle.id,
+                format: handle.format,
+                writable: handle.writable,
             })
         })();
         match result {
@@ -830,26 +958,299 @@ pub fn sync_webdav(
     allow_insecure_http: bool,
     backup_directory: String,
 ) -> Result<SyncResult, BridgeError> {
+    let started = Instant::now();
+    let state_directory = PathBuf::from(backup_directory);
+    let state = FileSyncStateStore::new(state_directory.clone());
+    if state.load_state()?.suspension == Some(SyncSuspension::RestorePending) {
+        return Err(BridgeError::SyncRestoreDecisionRequired);
+    }
     let provider = WebDavProvider::new(&endpoint, username, password, allow_insecure_http)?;
-    let backups = FileBackupStore::new(PathBuf::from(backup_directory), 10)?;
+    let backups = FileBackupStore::new(state_directory.join("backups"), 20)?;
+    let install_backups = FileBackupStore::new(state_directory.join("backups"), 20)?;
+    let base = state.load_base()?;
     let session = get_vault(handle_id)?;
     let mut session = session
         .lock()
         .map_err(|_| BridgeError::SessionUnavailable)?;
     let local = session.encrypted_snapshot()?;
-    let outcome = {
+    let result = {
         let engine = SyncEngine::new(provider, SessionVaultMerger(&session), backups);
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .map_err(|_| BridgeError::SyncFailed)?;
-        runtime.block_on(engine.synchronize(&local))?
+        runtime.block_on(engine.synchronize(&local, base.as_ref().map(|bytes| bytes.as_slice())))
     };
+    let outcome = match result {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+            if error == SyncError::AttachmentConflictUnsupported {
+                let _ = state.suspend(SyncSuspension::AttachmentConflict);
+            }
+            let _ = state.append_diagnostic(DiagnosticEvent::failure(
+                sync_error_code(&error),
+                duration_ms,
+            ));
+            return Err(error.into());
+        }
+    };
+    install_backups.store_labeled(&local, BackupOrigin::LocalBeforeInstall)?;
     session.install_synced_snapshot(&outcome.encrypted_bytes)?;
+    state.commit_base(&outcome.encrypted_bytes)?;
+    state.record_success(outcome.action, outcome.report.pending_conflicts)?;
+    let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+    state.append_diagnostic(DiagnosticEvent::success(
+        outcome.action,
+        u32::try_from(outcome.attempts).unwrap_or(u32::MAX),
+        duration_ms,
+        outcome.report.auto_merged_objects,
+        outcome.report.created_conflicts,
+        outcome.report.pending_conflicts,
+    ))?;
     Ok(SyncResult {
         attempts: u32::try_from(outcome.attempts).map_err(|_| BridgeError::SyncFailed)?,
         merged: outcome.merged,
+        action: outcome.action.into(),
+        auto_merged_objects: outcome.report.auto_merged_objects,
+        created_conflicts: outcome.report.created_conflicts,
+        pending_conflicts: outcome.report.pending_conflicts,
+        baseline_rebuilt: outcome.report.baseline_rebuilt,
     })
+}
+
+/// Complete a restore with an explicit user choice. Merge re-enters the normal
+/// three-way flow; replace uses a conditional write and verifies the committed
+/// ciphertext so a concurrent remote update is never silently overwritten.
+pub fn complete_restore_webdav(
+    handle_id: u64,
+    endpoint: String,
+    username: String,
+    password: String,
+    allow_insecure_http: bool,
+    state_directory: String,
+    decision: RestoreDecisionView,
+) -> Result<SyncResult, BridgeError> {
+    let state_directory = PathBuf::from(state_directory);
+    let state = FileSyncStateStore::new(state_directory.clone());
+    if state.load_state()?.suspension != Some(SyncSuspension::RestorePending) {
+        return Err(BridgeError::InvalidInput);
+    }
+    match decision {
+        RestoreDecisionView::Merge => {
+            state.clear_suspension()?;
+            let result = sync_webdav(
+                handle_id,
+                endpoint,
+                username,
+                password,
+                allow_insecure_http,
+                state_directory.to_string_lossy().into_owned(),
+            );
+            if result.is_err() {
+                let _ = state.suspend(SyncSuspension::RestorePending);
+            }
+            result
+        }
+        RestoreDecisionView::ReplaceRemote => replace_remote_after_restore(
+            handle_id,
+            &endpoint,
+            username,
+            password,
+            allow_insecure_http,
+            &state_directory,
+        ),
+    }
+}
+
+fn replace_remote_after_restore(
+    handle_id: u64,
+    endpoint: &str,
+    username: String,
+    password: String,
+    allow_insecure_http: bool,
+    state_directory: &Path,
+) -> Result<SyncResult, BridgeError> {
+    let started = Instant::now();
+    let provider = WebDavProvider::new(endpoint, username, password, allow_insecure_http)?;
+    let state = FileSyncStateStore::new(state_directory.to_path_buf());
+    let backups = FileBackupStore::new(state_directory.join("backups"), 20)?;
+    let session = get_vault(handle_id)?;
+    let session = session
+        .lock()
+        .map_err(|_| BridgeError::SessionUnavailable)?;
+    let local = session.encrypted_snapshot()?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|_| BridgeError::SyncFailed)?;
+    let result = runtime.block_on(async {
+        let remote = match provider.download().await {
+            Ok(remote) => Some(remote),
+            Err(SyncError::RemoteNotFound) => None,
+            Err(error) => return Err(error),
+        };
+        if let Some(remote) = &remote {
+            session
+                .validate_replica_snapshot(&remote.encrypted_bytes)
+                .map_err(map_vault_merge_error)?;
+            backups.store_labeled(&remote.encrypted_bytes, BackupOrigin::RemoteBeforeMerge)?;
+        }
+        let expected_etag = remote.as_ref().map(|value| value.revision.etag.as_str());
+        let revision = provider
+            .conditional_upload(ConditionalUpload {
+                expected_etag,
+                encrypted_bytes: &local,
+            })
+            .await?;
+        let verified = provider.download().await?;
+        if verified.revision.etag != revision.etag
+            || verified.encrypted_bytes.as_slice() != local.as_slice()
+        {
+            return Err(SyncError::VerificationFailed);
+        }
+        Ok(remote.is_none())
+    });
+    let created = match result {
+        Ok(value) => value,
+        Err(error) => {
+            let _ = state.append_diagnostic(DiagnosticEvent::failure(
+                sync_error_code(&error),
+                u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            ));
+            return Err(error.into());
+        }
+    };
+    let action = if created {
+        SyncAction::CreatedRemote
+    } else {
+        SyncAction::Uploaded
+    };
+    state.commit_base(&local)?;
+    state.record_success(action, 0)?;
+    state.append_diagnostic(DiagnosticEvent::success(
+        action,
+        1,
+        u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+        0,
+        0,
+        0,
+    ))?;
+    Ok(SyncResult {
+        attempts: 1,
+        merged: false,
+        action: action.into(),
+        auto_merged_objects: 0,
+        created_conflicts: 0,
+        pending_conflicts: 0,
+        baseline_rebuilt: false,
+    })
+}
+
+pub fn list_sync_conflicts(handle_id: u64) -> Result<Vec<SyncConflictView>, BridgeError> {
+    let session = get_vault(handle_id)?;
+    let session = session
+        .lock()
+        .map_err(|_| BridgeError::SessionUnavailable)?;
+    Ok(session.conflicts().into_iter().map(Into::into).collect())
+}
+
+pub fn resolve_sync_conflict(
+    handle_id: u64,
+    conflict_id: String,
+    default_choice: ConflictChoiceView,
+    field_choices: Vec<ConflictFieldChoiceInput>,
+) -> Result<(), BridgeError> {
+    let resolution = ConflictResolution {
+        conflict_id: parse_uuid(&conflict_id)?,
+        default_choice: default_choice.into(),
+        field_choices: field_choices
+            .into_iter()
+            .map(|value| (value.key, value.choice.into()))
+            .collect(),
+    };
+    with_vault_mut(handle_id, |session| session.resolve_conflict(&resolution))
+}
+
+pub fn list_sync_backups(
+    handle_id: u64,
+    state_directory: String,
+) -> Result<Vec<SyncBackupView>, BridgeError> {
+    let session = get_vault(handle_id)?;
+    let session = session
+        .lock()
+        .map_err(|_| BridgeError::SessionUnavailable)?;
+    let backups = FileBackupStore::new(PathBuf::from(state_directory).join("backups"), 20)?;
+    let records = backups
+        .list()?
+        .into_iter()
+        .filter_map(|record| {
+            let snapshot = backups.read(&record.id).ok()?;
+            session
+                .validate_replica_snapshot(&snapshot)
+                .ok()
+                .map(|_| record.into())
+        })
+        .collect::<Vec<_>>();
+    Ok(records)
+}
+
+pub fn restore_sync_backup(
+    handle_id: u64,
+    state_directory: String,
+    backup_id: String,
+) -> Result<(), BridgeError> {
+    let state_directory = PathBuf::from(state_directory);
+    let backups = FileBackupStore::new(state_directory.join("backups"), 20)?;
+    let state = FileSyncStateStore::new(state_directory);
+    let snapshot = backups.read(&backup_id)?;
+    let session = get_vault(handle_id)?;
+    let mut session = session
+        .lock()
+        .map_err(|_| BridgeError::SessionUnavailable)?;
+    session.validate_replica_snapshot(&snapshot)?;
+    let current = session.encrypted_snapshot()?;
+    backups.store_labeled(&current, BackupOrigin::LocalBeforeRestore)?;
+    session.install_synced_snapshot(&snapshot)?;
+    state.invalidate_base()?;
+    state.suspend(SyncSuspension::RestorePending)?;
+    Ok(())
+}
+
+pub fn list_sync_diagnostics(
+    state_directory: String,
+) -> Result<Vec<SyncDiagnosticView>, BridgeError> {
+    let diagnostics = FileSyncStateStore::new(PathBuf::from(state_directory))
+        .load_diagnostics()?
+        .into_iter()
+        .map(Into::into)
+        .collect::<Vec<_>>();
+    Ok(diagnostics)
+}
+
+pub fn sync_state(state_directory: String) -> Result<SyncStateView, BridgeError> {
+    let state = FileSyncStateStore::new(PathBuf::from(state_directory)).load_state()?;
+    Ok(SyncStateView {
+        last_success_unix_ms: state.last_success_unix_ms,
+        last_action: state.last_action,
+        pending_conflicts: state.pending_conflicts,
+        restore_pending: state.suspension == Some(SyncSuspension::RestorePending),
+        attachment_conflict: state.suspension == Some(SyncSuspension::AttachmentConflict),
+    })
+}
+
+pub fn export_sync_diagnostics(
+    state_directory: String,
+    destination_path: String,
+) -> Result<(), BridgeError> {
+    FileSyncStateStore::new(PathBuf::from(state_directory))
+        .export_diagnostics(Path::new(&destination_path), true)?;
+    Ok(())
+}
+
+pub fn clear_sync_diagnostics(state_directory: String) -> Result<(), BridgeError> {
+    FileSyncStateStore::new(PathBuf::from(state_directory)).clear_diagnostics()?;
+    Ok(())
 }
 
 /// Legacy ephemeral OTP import retained for the locked-vault preview flow.
@@ -946,6 +1347,7 @@ fn insert_vault_session(
     path: PathBuf,
     session: FileVaultSession,
 ) -> Result<VaultHandle, BridgeError> {
+    let format: VaultFormatView = session.format().into();
     sessions.next_id = sessions
         .next_id
         .checked_add(1)
@@ -953,7 +1355,11 @@ fn insert_vault_session(
     let id = sessions.next_id;
     sessions.sessions.insert(id, Arc::new(Mutex::new(session)));
     sessions.paths.insert(path, id);
-    Ok(VaultHandle { id })
+    Ok(VaultHandle {
+        id,
+        format,
+        writable: format.writable(),
+    })
 }
 
 fn ensure_path_available(sessions: &VaultSessions, path: &Path) -> Result<(), BridgeError> {
@@ -1064,10 +1470,153 @@ fn with_vault_mut<T>(
 struct SessionVaultMerger<'a>(&'a FileVaultSession);
 
 impl VaultMerger for SessionVaultMerger<'_> {
-    fn merge(&self, local: &[u8], remote: &[u8]) -> sync_core::Result<Zeroizing<Vec<u8>>> {
-        self.0
-            .merge_encrypted_snapshots(local, remote)
-            .map_err(|_| SyncError::Merge)
+    fn merge(
+        &self,
+        base: Option<&[u8]>,
+        local: &[u8],
+        remote: &[u8],
+    ) -> sync_core::Result<MergeOutput> {
+        let output = self
+            .0
+            .three_way_merge_encrypted_snapshots(base, local, remote)
+            .map_err(map_vault_merge_error)?;
+        Ok(MergeOutput {
+            encrypted_bytes: output.encrypted_bytes,
+            report: SyncMergeReport {
+                auto_merged_objects: output.report.auto_merged_objects,
+                created_conflicts: u32::try_from(output.report.created_conflicts.len())
+                    .unwrap_or(u32::MAX),
+                pending_conflicts: output.report.pending_conflicts,
+                baseline_rebuilt: output.report.baseline_rebuilt,
+            },
+            requires_upload: output.requires_upload,
+        })
+    }
+}
+
+fn map_vault_merge_error(error: VaultError) -> SyncError {
+    match error {
+        VaultError::RemoteVaultMismatch => SyncError::RemoteVaultMismatch,
+        VaultError::AttachmentMergeUnsupported => SyncError::AttachmentConflictUnsupported,
+        _ => SyncError::Merge,
+    }
+}
+
+fn sync_error_code(error: &SyncError) -> &'static str {
+    match error {
+        SyncError::RemoteNotFound => "remote_not_found",
+        SyncError::PreconditionFailed => "precondition_failed",
+        SyncError::Provider => "provider",
+        SyncError::Merge => "merge",
+        SyncError::Backup => "backup",
+        SyncError::VerificationFailed => "verification_failed",
+        SyncError::RetryLimitReached => "retry_limit_reached",
+        SyncError::InvalidConfiguration => "invalid_configuration",
+        SyncError::ConditionalWritesUnsupported => "conditional_writes_unsupported",
+        SyncError::State => "state",
+        SyncError::Diagnostics => "diagnostics",
+        SyncError::RemoteVaultMismatch => "remote_vault_mismatch",
+        SyncError::AttachmentConflictUnsupported => "attachment_conflict_unsupported",
+        SyncError::RestoreDecisionRequired => "restore_decision_required",
+    }
+}
+
+impl From<SyncAction> for SyncActionView {
+    fn from(value: SyncAction) -> Self {
+        match value {
+            SyncAction::CreatedRemote => Self::CreatedRemote,
+            SyncAction::Uploaded => Self::Uploaded,
+            SyncAction::Downloaded => Self::Downloaded,
+            SyncAction::Merged => Self::Merged,
+            SyncAction::Unchanged => Self::Unchanged,
+        }
+    }
+}
+
+impl From<KdbxFormat> for VaultFormatView {
+    fn from(value: KdbxFormat) -> Self {
+        match value {
+            KdbxFormat::Kdbx4_1 => Self::Kdbx4_1,
+            KdbxFormat::Kdbx4_0ReadOnly => Self::Kdbx4_0ReadOnly,
+            KdbxFormat::OtherReadOnly => Self::OtherReadOnly,
+        }
+    }
+}
+
+impl From<ConflictKind> for ConflictKindView {
+    fn from(value: ConflictKind) -> Self {
+        match value {
+            ConflictKind::EntryEdit => Self::EntryEdit,
+            ConflictKind::DeleteEdit => Self::DeleteEdit,
+            ConflictKind::GroupEdit => Self::GroupEdit,
+        }
+    }
+}
+
+impl From<VaultConflict> for SyncConflictView {
+    fn from(value: VaultConflict) -> Self {
+        Self {
+            id: value.id.to_string(),
+            object_id: value.object_id.to_string(),
+            alternate_entry_id: value.alternate_entry_id.to_string(),
+            kind: value.kind.into(),
+            title: value.title,
+            fields: value
+                .fields
+                .into_iter()
+                .map(|field| ConflictFieldView {
+                    key: field.key,
+                    is_protected: field.is_protected,
+                })
+                .collect(),
+        }
+    }
+}
+
+impl From<ConflictChoiceView> for ConflictChoice {
+    fn from(value: ConflictChoiceView) -> Self {
+        match value {
+            ConflictChoiceView::Primary => Self::Primary,
+            ConflictChoiceView::Alternate => Self::Alternate,
+        }
+    }
+}
+
+impl From<BackupOrigin> for BackupOriginView {
+    fn from(value: BackupOrigin) -> Self {
+        match value {
+            BackupOrigin::RemoteBeforeMerge => Self::RemoteBeforeMerge,
+            BackupOrigin::LocalBeforeInstall => Self::LocalBeforeInstall,
+            BackupOrigin::LocalBeforeRestore => Self::LocalBeforeRestore,
+            BackupOrigin::Legacy => Self::Legacy,
+        }
+    }
+}
+
+impl From<sync_core::BackupDescriptor> for SyncBackupView {
+    fn from(value: sync_core::BackupDescriptor) -> Self {
+        Self {
+            id: value.id,
+            created_at_unix_ms: value.created_at_unix_ms,
+            encrypted_size: value.encrypted_size,
+            origin: value.origin.into(),
+        }
+    }
+}
+
+impl From<DiagnosticEvent> for SyncDiagnosticView {
+    fn from(value: DiagnosticEvent) -> Self {
+        Self {
+            timestamp_unix_ms: value.timestamp_unix_ms,
+            stage: value.stage,
+            outcome: value.outcome,
+            error_code: value.error_code,
+            attempts: value.attempts,
+            duration_ms: value.duration_ms,
+            auto_merged_objects: value.auto_merged_objects,
+            created_conflicts: value.created_conflicts,
+            pending_conflicts: value.pending_conflicts,
+        }
     }
 }
 
@@ -1127,6 +1676,7 @@ impl From<VaultError> for BridgeError {
             | VaultError::InvalidTimestamp => Self::InvalidOtp,
             VaultError::KdbxOpen | VaultError::InvalidKdbx => Self::WrongPasswordOrInvalidVault,
             VaultError::KdbxSave | VaultError::VaultWrite => Self::FileWrite,
+            VaultError::UnsupportedKdbxWriteVersion => Self::UnsupportedVaultWriteVersion,
             VaultError::VaultRead => Self::FileRead,
             VaultError::EntryNotFound => Self::EntryNotFound,
             VaultError::GroupNotFound => Self::GroupNotFound,
@@ -1141,6 +1691,11 @@ impl From<VaultError> for BridgeError {
             VaultError::FieldUnavailable => Self::FieldUnavailable,
             VaultError::VaultAlreadyOpen => Self::VaultAlreadyOpen,
             VaultError::QuickUnlock => Self::QuickUnlockFailed,
+            VaultError::RemoteVaultMismatch => Self::SyncRemoteVaultMismatch,
+            VaultError::AttachmentMergeUnsupported => Self::SyncAttachmentConflictUnsupported,
+            VaultError::ConflictNotFound | VaultError::InvalidConflictResolution => {
+                Self::InvalidInput
+            }
             VaultError::DuplicateWorkspace
             | VaultError::WorkspaceNotFound
             | VaultError::InvalidWorkspace => Self::InvalidInput,
@@ -1149,8 +1704,23 @@ impl From<VaultError> for BridgeError {
 }
 
 impl From<SyncError> for BridgeError {
-    fn from(_: SyncError) -> Self {
-        Self::SyncFailed
+    fn from(error: SyncError) -> Self {
+        match error {
+            SyncError::ConditionalWritesUnsupported => Self::SyncConditionalWritesUnsupported,
+            SyncError::RemoteVaultMismatch => Self::SyncRemoteVaultMismatch,
+            SyncError::AttachmentConflictUnsupported => Self::SyncAttachmentConflictUnsupported,
+            SyncError::Backup => Self::SyncBackupFailed,
+            SyncError::VerificationFailed => Self::SyncVerificationFailed,
+            SyncError::RetryLimitReached => Self::SyncRetryLimitReached,
+            SyncError::State => Self::SyncStateFailed,
+            SyncError::Diagnostics => Self::SyncDiagnosticsFailed,
+            SyncError::RestoreDecisionRequired => Self::SyncRestoreDecisionRequired,
+            SyncError::RemoteNotFound
+            | SyncError::PreconditionFailed
+            | SyncError::Provider
+            | SyncError::Merge
+            | SyncError::InvalidConfiguration => Self::SyncFailed,
+        }
     }
 }
 
