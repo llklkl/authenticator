@@ -3,6 +3,40 @@ use zeroize::Zeroizing;
 
 use crate::Result;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyncAction {
+    CreatedRemote,
+    Uploaded,
+    Downloaded,
+    Merged,
+    Unchanged,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MergeReport {
+    pub auto_merged_objects: u32,
+    pub created_conflicts: u32,
+    pub pending_conflicts: u32,
+    pub baseline_rebuilt: bool,
+}
+
+pub struct MergeOutput {
+    pub encrypted_bytes: Zeroizing<Vec<u8>>,
+    pub report: MergeReport,
+    pub requires_upload: bool,
+}
+
+impl std::fmt::Debug for MergeOutput {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("MergeOutput")
+            .field("encrypted_bytes", &"[REDACTED]")
+            .field("report", &self.report)
+            .field("requires_upload", &self.requires_upload)
+            .finish()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoteRevision {
     pub etag: String,
@@ -40,7 +74,7 @@ pub trait SyncProvider: Send + Sync {
 
 pub trait VaultMerger: Send + Sync {
     /// Merge encrypted KDBX snapshots using an already-authorized vault session.
-    fn merge(&self, local: &[u8], remote: &[u8]) -> Result<Zeroizing<Vec<u8>>>;
+    fn merge(&self, base: Option<&[u8]>, local: &[u8], remote: &[u8]) -> Result<MergeOutput>;
 }
 
 pub trait BackupStore: Send + Sync {

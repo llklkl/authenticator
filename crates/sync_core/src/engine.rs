@@ -1,12 +1,17 @@
 use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
 
-use crate::{BackupStore, ConditionalUpload, Result, SyncError, SyncProvider, VaultMerger};
+use crate::{
+    BackupStore, ConditionalUpload, MergeReport, Result, SyncAction, SyncError, SyncProvider,
+    VaultMerger,
+};
 
 pub struct SyncOutcome {
     pub attempts: usize,
     pub uploaded_etag: String,
     pub merged: bool,
+    pub action: SyncAction,
+    pub report: MergeReport,
     pub encrypted_bytes: Zeroizing<Vec<u8>>,
 }
 
@@ -17,6 +22,8 @@ impl std::fmt::Debug for SyncOutcome {
             .field("attempts", &self.attempts)
             .field("uploaded_etag", &self.uploaded_etag)
             .field("merged", &self.merged)
+            .field("action", &self.action)
+            .field("report", &self.report)
             .field("encrypted_bytes", &"[REDACTED]")
             .finish()
     }
@@ -44,9 +51,11 @@ where
         }
     }
 
-    pub async fn synchronize(&self, local: &[u8]) -> Result<SyncOutcome> {
+    pub async fn synchronize(&self, local: &[u8], base: Option<&[u8]>) -> Result<SyncOutcome> {
         let mut candidate = Zeroizing::new(local.to_vec());
         let mut merged = false;
+        let mut report = MergeReport::default();
+        let mut merge_base = base.map(|bytes| Zeroizing::new(bytes.to_vec()));
         for attempt in 1..=self.max_attempts {
             let remote = match self.provider.download().await {
                 Ok(remote) => Some(remote),
@@ -57,12 +66,33 @@ where
                 self.backups
                     .store(&remote.encrypted_bytes)
                     .map_err(|_| SyncError::Backup)?;
-                if sha256(&candidate) != remote.revision.content_sha256 {
-                    candidate = self
-                        .merger
-                        .merge(&candidate, &remote.encrypted_bytes)
-                        .map_err(|_| SyncError::Merge)?;
-                    merged = true;
+                if sha256(&candidate) == remote.revision.content_sha256 {
+                    return Ok(SyncOutcome {
+                        attempts: attempt,
+                        uploaded_etag: remote.revision.etag.clone(),
+                        merged,
+                        action: SyncAction::Unchanged,
+                        report,
+                        encrypted_bytes: Zeroizing::new(remote.encrypted_bytes.to_vec()),
+                    });
+                }
+                let output = self.merger.merge(
+                    merge_base.as_ref().map(|bytes| bytes.as_slice()),
+                    &candidate,
+                    &remote.encrypted_bytes,
+                )?;
+                candidate = output.encrypted_bytes;
+                report = output.report;
+                merged = report.auto_merged_objects > 0 || report.created_conflicts > 0;
+                if !output.requires_upload {
+                    return Ok(SyncOutcome {
+                        attempts: attempt,
+                        uploaded_etag: remote.revision.etag.clone(),
+                        merged,
+                        action: SyncAction::Downloaded,
+                        report,
+                        encrypted_bytes: candidate,
+                    });
                 }
                 Some(remote.revision.etag.as_str())
             } else {
@@ -87,10 +117,21 @@ where
                         attempts: attempt,
                         uploaded_etag: revision.etag,
                         merged,
+                        action: if remote.is_none() {
+                            SyncAction::CreatedRemote
+                        } else if merged {
+                            SyncAction::Merged
+                        } else {
+                            SyncAction::Uploaded
+                        },
+                        report,
                         encrypted_bytes: candidate,
                     });
                 }
-                Err(SyncError::PreconditionFailed) => continue,
+                Err(SyncError::PreconditionFailed) => {
+                    merge_base = remote.map(|object| object.encrypted_bytes);
+                    continue;
+                }
                 Err(error) => return Err(error),
             }
         }
@@ -167,11 +208,23 @@ mod tests {
     }
     struct ConcatenatingMerger;
     impl VaultMerger for ConcatenatingMerger {
-        fn merge(&self, local: &[u8], remote: &[u8]) -> Result<Zeroizing<Vec<u8>>> {
+        fn merge(
+            &self,
+            _base: Option<&[u8]>,
+            local: &[u8],
+            remote: &[u8],
+        ) -> Result<crate::MergeOutput> {
             let mut merged = remote.to_vec();
             merged.extend_from_slice(b"+");
             merged.extend_from_slice(local);
-            Ok(Zeroizing::new(merged))
+            Ok(crate::MergeOutput {
+                encrypted_bytes: Zeroizing::new(merged),
+                report: crate::MergeReport {
+                    auto_merged_objects: 1,
+                    ..crate::MergeReport::default()
+                },
+                requires_upload: true,
+            })
         }
     }
     #[derive(Default)]
@@ -191,7 +244,7 @@ mod tests {
             ConcatenatingMerger,
             MemoryBackups::default(),
         );
-        let outcome = futures_lite::future::block_on(engine.synchronize(b"local")).unwrap();
+        let outcome = futures_lite::future::block_on(engine.synchronize(b"local", None)).unwrap();
         assert_eq!(outcome.attempts, 2);
         let state = provider.state.lock().unwrap();
         assert!(state.bytes.windows(12).any(|part| part == b"other-device"));
@@ -242,7 +295,8 @@ mod tests {
             ConcatenatingMerger,
             MemoryBackups::default(),
         );
-        let outcome = futures_lite::future::block_on(engine.synchronize(b"first vault")).unwrap();
+        let outcome =
+            futures_lite::future::block_on(engine.synchronize(b"first vault", None)).unwrap();
         assert_eq!(outcome.attempts, 1);
         assert!(!outcome.merged);
         assert_eq!(&*outcome.encrypted_bytes, b"first vault");
@@ -258,6 +312,8 @@ mod tests {
             attempts: 1,
             uploaded_etag: "etag".into(),
             merged: false,
+            action: SyncAction::Unchanged,
+            report: MergeReport::default(),
             encrypted_bytes: Zeroizing::new(b"secret ciphertext marker".to_vec()),
         };
         assert!(!format!("{outcome:?}").contains("secret ciphertext marker"));
