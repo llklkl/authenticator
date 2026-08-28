@@ -32,16 +32,27 @@ parent; restoration uses that parent when it still exists and falls back to the
 root otherwise. Root and recycle-bin groups are protected from ordinary rename,
 move, and delete operations.
 
-The synchronization engine never performs an unconditional remote overwrite. It
-downloads the current revision, merges UUIDs/history/deletion records, stores an
-encrypted backup, uploads against the observed ETag, and downloads again to
-verify the committed ciphertext.
+The synchronization engine never performs an unconditional remote overwrite. A
+successful verified ciphertext is stored as an independent per-workspace merge
+baseline. The next transaction downloads the current revision, validates the
+root workspace UUID, performs a three-way field merge, preserves unresolved
+same-field and delete/edit conflicts inside the encrypted KDBX, stores encrypted
+remote and local backups, uploads against the observed ETag, and downloads again
+to verify the committed ciphertext. Attachment divergence fails closed.
 
-WebDAV credentials are currently entered per synchronization attempt and are
-not persisted. Remote creation uses `If-None-Match: *`; updates use a strong
+WebDAV credentials may optionally be stored in the operating-system credential
+store and are never written to the workspace registry or diagnostics. Remote
+creation uses `If-None-Match: *`; updates use a strong
 ETag with `If-Match`. A successful transaction returns the verified final
 ciphertext to the vault session, which validates the KDBX password before
 installing it locally.
+
+Restoring an encrypted backup invalidates the merge baseline and persists a
+restore-pending suspension. Sync cannot resume until the user explicitly chooses
+safe merge or replace-remote. Replace-remote still downloads and backs up the
+remote, uses its strong ETag for a conditional write, and verifies the committed
+ciphertext. Diagnostics contain only versioned stages, stable error codes,
+durations, attempts, and aggregate conflict counts.
 
 On Android, a platform channel isolates BiometricPrompt, Android Keystore,
 screen-off events, and window protection from shared Flutter code. One strong

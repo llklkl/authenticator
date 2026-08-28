@@ -19,8 +19,9 @@ The current offline alpha includes:
   recent items, encrypted attachment management, and local password-health
   checks that expose only entry IDs and risk types to Flutter.
 - Standard `otpauth` and Google Authenticator migration-payload import.
-- Provider-neutral conditional synchronization with ETag retry, encrypted
-  backup hooks, remote creation protection, and post-upload verification.
+- Provider-neutral three-way synchronization with a per-workspace encrypted
+  baseline, ETag retry, encrypted backup rotation, remote-workspace identity
+  checks, restore workflow, conflict preservation, and post-upload verification.
 - Per-workspace foreground WebDAV auto-sync with conditional writes, readable
   status, retry/backoff, optional non-metered-network policy, and passwords
   stored only through the operating-system credential store when requested.
@@ -39,7 +40,9 @@ The current offline alpha includes:
   Android backups.
 
 Camera/image QR decoding, platform autofill, browser companion extensions,
-attachment preview, and locked background sync remain under active development.
+attachment preview/merge, and locked background sync remain under active
+development. KDBX 4.0 opens read-only; an explicit 4.0-to-4.1 conversion flow is
+intentionally deferred.
 
 ## Architecture
 
@@ -49,6 +52,8 @@ attachment preview, and locked background sync remain under active development.
 - The initial sync provider is WebDAV; no hosted account is required.
 
 See [`AGENTS.md`](AGENTS.md) for engineering and security rules.
+See [`docs/synchronization.md`](docs/synchronization.md) for the conflict,
+backup, recovery, and two-device verification workflow.
 
 ## Development
 

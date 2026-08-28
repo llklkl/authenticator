@@ -1,14 +1,18 @@
 # Compatibility notes
 
-The core reads existing KDBX 3/4 databases supported by `keepass` 0.13.x and
-writes KDBX 4.1. New workspaces use the library's KDBX 4 defaults. Application
+The core reads existing KDBX databases supported by `keepass` 0.13.x. It only
+writes an already-KDBX-4.1 database; KDBX 4.0 and other versions are exposed as
+read-only and are never silently upgraded. New workspaces use KDBX 4.1. Application
 entry metadata uses the unprotected custom fields
 `Authenticator.EntryKind` and `Authenticator.ModifiedAtUnixMs`; passwords,
 notes, OTP URIs, and recovery codes are protected KDBX fields.
 
 Read-modify-write tests cover unknown protected fields, entry history, UUID
-merge, deletion records, independently added entries, nested-group moves, and
-recycle-bin trash/restore/empty behavior. Before a stable release, the
+merge, deletion records, independent-field three-way merge, same-field and
+delete/edit conflict preservation, independently added entries, nested-group
+moves, and recycle-bin trash/restore/empty behavior. Attachment-bearing
+divergence fails closed before upload because upstream does not yet safely merge
+attachment histories. Before a stable release, the
 compatibility suite must also exercise versioned fixtures opened and saved by
 current KeePass and KeePassXC releases, including custom icons and attachments.
 
