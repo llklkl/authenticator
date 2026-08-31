@@ -32,7 +32,9 @@ parent; restoration uses that parent when it still exists and falls back to the
 root otherwise. Root and recycle-bin groups are protected from ordinary rename,
 move, and delete operations.
 
-The synchronization engine never performs an unconditional remote overwrite. A
+The synchronization engine accesses remote storage through a Rust-owned,
+remote-only VFS whose write API permits only create-if-absent or
+revision-matched replacement. It never performs an unconditional remote overwrite. A
 successful verified ciphertext is stored as an independent per-workspace merge
 baseline. The next transaction downloads the current revision, validates the
 root workspace UUID, performs a three-way field merge, preserves unresolved
@@ -46,6 +48,14 @@ creation uses `If-None-Match: *`; updates use a strong
 ETag with `If-Match`. A successful transaction returns the verified final
 ciphertext to the vault session, which validates the KDBX password before
 installing it locally.
+
+Tencent Cloud COS uses a different repository protocol because COS cannot
+replace an object conditionally by ETag. Encrypted snapshots and canonical
+commit manifests are stored as content-addressed, create-only objects. Parent
+links form an append-only DAG; all visible heads are merged, while a head hidden
+by COS list eventual consistency is merged after it becomes visible. The client
+requires bucket versioning to be disabled, verifies every created object by a
+direct read, and never requests remote delete permission.
 
 Restoring an encrypted backup invalidates the merge baseline and persists a
 restore-pending suspension. Sync cannot resume until the user explicitly chooses

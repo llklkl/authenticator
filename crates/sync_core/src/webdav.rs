@@ -6,7 +6,10 @@ use sha2::{Digest, Sha256};
 use url::Url;
 use zeroize::Zeroizing;
 
-use crate::{ConditionalUpload, RemoteObject, RemoteRevision, Result, SyncError, SyncProvider};
+use crate::{
+    ConditionalUpload, RemoteObject, RemoteRevision, RemoteVfs, Result, SyncError, SyncProvider,
+    VfsCapabilities, VfsListPage, VfsObject, VfsPath, VfsRevision, WriteCondition,
+};
 
 /// WebDAV provider restricted to ETag-based optimistic concurrency.
 pub struct WebDavProvider {
@@ -52,6 +55,13 @@ impl WebDavProvider {
             .basic_auth(&*self.username, Some(&*self.password))
     }
 
+    pub fn location_fingerprint(&self) -> [u8; 32] {
+        let mut digest = Sha256::new();
+        digest.update(b"webdav-v1\0");
+        digest.update(self.endpoint.as_str().as_bytes());
+        digest.finalize().into()
+    }
+
     async fn head_etag(&self) -> Result<String> {
         let response = self
             .request(reqwest::Method::HEAD)
@@ -76,8 +86,19 @@ impl fmt::Debug for WebDavProvider {
 }
 
 #[async_trait]
-impl SyncProvider for WebDavProvider {
-    async fn download(&self) -> Result<RemoteObject> {
+impl RemoteVfs for WebDavProvider {
+    fn capabilities(&self) -> VfsCapabilities {
+        VfsCapabilities {
+            list: false,
+            create_only: true,
+            match_revision: true,
+        }
+    }
+
+    async fn read(&self, path: &VfsPath) -> Result<VfsObject> {
+        if path != &VfsPath::root() {
+            return Err(SyncError::UnsupportedOperation);
+        }
         let response = self
             .request(reqwest::Method::GET)
             .send()
@@ -91,30 +112,37 @@ impl SyncProvider for WebDavProvider {
         }
         let etag = strong_etag(response.headers())?;
         let bytes = response.bytes().await.map_err(|_| SyncError::Provider)?;
-        let revision = RemoteRevision {
-            etag,
-            content_sha256: Sha256::digest(&bytes).into(),
-            content_length: bytes.len() as u64,
-        };
-        Ok(RemoteObject {
+        let revision = VfsRevision::new(etag, Sha256::digest(&bytes).into(), bytes.len() as u64)?;
+        Ok(VfsObject {
             revision,
-            encrypted_bytes: Zeroizing::new(bytes.to_vec()),
+            bytes: Zeroizing::new(bytes.to_vec()),
         })
     }
 
-    async fn conditional_upload(&self, request: ConditionalUpload<'_>) -> Result<RemoteRevision> {
-        let content_hash: [u8; 32] = Sha256::digest(request.encrypted_bytes).into();
-        let content_length = request.encrypted_bytes.len() as u64;
+    async fn list(&self, _prefix: &VfsPath, _continuation: Option<&str>) -> Result<VfsListPage> {
+        Err(SyncError::UnsupportedOperation)
+    }
+
+    async fn write(
+        &self,
+        path: &VfsPath,
+        bytes: &[u8],
+        condition: WriteCondition<'_>,
+    ) -> Result<VfsRevision> {
+        if path != &VfsPath::root() {
+            return Err(SyncError::UnsupportedOperation);
+        }
+        let content_hash: [u8; 32] = Sha256::digest(bytes).into();
+        let content_length = bytes.len() as u64;
         let mut upload = self
             .request(reqwest::Method::PUT)
             .header(header::CONTENT_TYPE, "application/octet-stream");
-        upload = if let Some(etag) = request.expected_etag {
-            upload.header(header::IF_MATCH, etag)
-        } else {
-            upload.header(header::IF_NONE_MATCH, "*")
+        upload = match condition {
+            WriteCondition::CreateOnly => upload.header(header::IF_NONE_MATCH, "*"),
+            WriteCondition::Match(revision) => upload.header(header::IF_MATCH, revision.token()),
         };
         let response = upload
-            .body(request.encrypted_bytes.to_vec())
+            .body(bytes.to_vec())
             .send()
             .await
             .map_err(|_| SyncError::Provider)?;
@@ -129,10 +157,38 @@ impl SyncProvider for WebDavProvider {
             Err(SyncError::ConditionalWritesUnsupported) => self.head_etag().await?,
             Err(error) => return Err(error),
         };
+        VfsRevision::new(etag, content_hash, content_length)
+    }
+}
+
+#[async_trait]
+impl SyncProvider for WebDavProvider {
+    async fn download(&self) -> Result<RemoteObject> {
+        let object = RemoteVfs::read(self, &VfsPath::root()).await?;
+        Ok(RemoteObject {
+            revision: RemoteRevision {
+                etag: object.revision.token().to_owned(),
+                content_sha256: object.revision.content_sha256,
+                content_length: object.revision.content_length,
+            },
+            encrypted_bytes: object.bytes,
+        })
+    }
+
+    async fn conditional_upload(&self, request: ConditionalUpload<'_>) -> Result<RemoteRevision> {
+        let expected = request
+            .expected_etag
+            .map(|etag| VfsRevision::new(etag.to_owned(), [0; 32], 0))
+            .transpose()?;
+        let condition = expected
+            .as_ref()
+            .map_or(WriteCondition::CreateOnly, WriteCondition::Match);
+        let revision =
+            RemoteVfs::write(self, &VfsPath::root(), request.encrypted_bytes, condition).await?;
         Ok(RemoteRevision {
-            etag,
-            content_sha256: content_hash,
-            content_length,
+            etag: revision.token().to_owned(),
+            content_sha256: revision.content_sha256,
+            content_length: revision.content_length,
         })
     }
 }

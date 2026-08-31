@@ -7,9 +7,9 @@ import '../frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `attachment_view`, `ensure_path_available`, `entry_view`, `get_vault`, `icon_view`, `insert_vault_session`, `into_entry`, `map_vault_merge_error`, `parse_uuid`, `path_identity`, `read_vault_sessions`, `replace_remote_after_restore`, `sync_error_code`, `with_vault_mut`, `writable`, `write_vault_sessions`
+// These functions are ignored because they are not marked as `pub`: `attachment_view`, `complete_restore_tencent_cos`, `ensure_path_available`, `entry_view`, `get_vault`, `hex_bytes`, `icon_view`, `insert_vault_session`, `into_entry`, `map_vault_merge_error`, `parse_uuid`, `path_identity`, `read_vault_sessions`, `replace_remote_after_restore`, `sync_error_code`, `sync_result`, `with_vault_mut`, `writable`, `write_vault_sessions`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `OtpSessions`, `SessionVaultMerger`, `VaultSessions`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `merge`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `merge`
 // These functions are ignored (category: IgnoreBecauseOwnerTyShouldIgnore): `default`, `default`
 
 /// Create and unlock a new KDBX workspace. Existing files are never overwritten.
@@ -389,6 +389,46 @@ Future<SyncResult> syncWebdav({
   backupDirectory: backupDirectory,
 );
 
+Future<SyncResult> syncVault({
+  required BigInt handleId,
+  required SyncProviderConfigView provider,
+  required String stateDirectory,
+}) => RustLib.instance.api.crateApiSimpleSyncVault(
+  handleId: handleId,
+  provider: provider,
+  stateDirectory: stateDirectory,
+);
+
+Future<SyncResult> syncTencentCos({
+  required BigInt handleId,
+  required String bucket,
+  required String region,
+  required String prefix,
+  required String secretId,
+  required String secretKey,
+  required String stateDirectory,
+}) => RustLib.instance.api.crateApiSimpleSyncTencentCos(
+  handleId: handleId,
+  bucket: bucket,
+  region: region,
+  prefix: prefix,
+  secretId: secretId,
+  secretKey: secretKey,
+  stateDirectory: stateDirectory,
+);
+
+Future<SyncResult> completeRestore({
+  required BigInt handleId,
+  required SyncProviderConfigView provider,
+  required String stateDirectory,
+  required RestoreDecisionView decision,
+}) => RustLib.instance.api.crateApiSimpleCompleteRestore(
+  handleId: handleId,
+  provider: provider,
+  stateDirectory: stateDirectory,
+  decision: decision,
+);
+
 /// Complete a restore with an explicit user choice. Merge re-enters the normal
 /// three-way flow; replace uses a conditional write and verifies the committed
 /// ciphertext so a concurrent remote update is never silently overwritten.
@@ -521,6 +561,8 @@ enum BridgeError {
   syncStateFailed,
   syncDiagnosticsFailed,
   syncRestoreDecisionRequired,
+  syncInvalidRemoteHistory,
+  syncUnsafeBucketVersioning,
   quickUnlockFailed,
 }
 
@@ -890,6 +932,63 @@ class SyncDiagnosticView {
           createdConflicts == other.createdConflicts &&
           pendingConflicts == other.pendingConflicts;
 }
+
+class SyncProviderConfigView {
+  final SyncProviderKindView kind;
+  final String endpoint;
+  final String username;
+  final String password;
+  final bool allowInsecureHttp;
+  final String bucket;
+  final String region;
+  final String prefix;
+  final String secretId;
+  final String secretKey;
+
+  const SyncProviderConfigView({
+    required this.kind,
+    required this.endpoint,
+    required this.username,
+    required this.password,
+    required this.allowInsecureHttp,
+    required this.bucket,
+    required this.region,
+    required this.prefix,
+    required this.secretId,
+    required this.secretKey,
+  });
+
+  @override
+  int get hashCode =>
+      kind.hashCode ^
+      endpoint.hashCode ^
+      username.hashCode ^
+      password.hashCode ^
+      allowInsecureHttp.hashCode ^
+      bucket.hashCode ^
+      region.hashCode ^
+      prefix.hashCode ^
+      secretId.hashCode ^
+      secretKey.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is SyncProviderConfigView &&
+          runtimeType == other.runtimeType &&
+          kind == other.kind &&
+          endpoint == other.endpoint &&
+          username == other.username &&
+          password == other.password &&
+          allowInsecureHttp == other.allowInsecureHttp &&
+          bucket == other.bucket &&
+          region == other.region &&
+          prefix == other.prefix &&
+          secretId == other.secretId &&
+          secretKey == other.secretKey;
+}
+
+enum SyncProviderKindView { webDav, tencentCos }
 
 class SyncResult {
   final int attempts;

@@ -6,12 +6,13 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tempfile::NamedTempFile;
 use zeroize::Zeroizing;
 
 use crate::{Result, SyncAction, SyncError};
 
-const STATE_VERSION: u32 = 1;
+const STATE_VERSION: u32 = 2;
 const DIAGNOSTIC_VERSION: u32 = 1;
 const MAX_DIAGNOSTIC_EVENTS: usize = 500;
 const DIAGNOSTIC_RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1000;
@@ -30,6 +31,27 @@ pub struct PersistedSyncState {
     pub last_action: Option<String>,
     pub pending_conflicts: u32,
     pub suspension: Option<SyncSuspension>,
+    #[serde(default)]
+    pub remote_location_fingerprint: Option<String>,
+    #[serde(default)]
+    pub base_commit_id: Option<String>,
+    #[serde(default)]
+    pub base_sha256: Option<String>,
+}
+
+pub struct BoundSyncBase {
+    pub encrypted: Option<Zeroizing<Vec<u8>>>,
+    pub commit_id: Option<String>,
+}
+
+impl std::fmt::Debug for BoundSyncBase {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("BoundSyncBase")
+            .field("encrypted", &self.encrypted.as_ref().map(|_| "[REDACTED]"))
+            .field("commit_id", &self.commit_id.as_ref().map(|_| "[REDACTED]"))
+            .finish()
+    }
 }
 
 impl Default for PersistedSyncState {
@@ -40,6 +62,9 @@ impl Default for PersistedSyncState {
             last_action: None,
             pending_conflicts: 0,
             suspension: None,
+            remote_location_fingerprint: None,
+            base_commit_id: None,
+            base_sha256: None,
         }
     }
 }
@@ -120,6 +145,47 @@ impl FileSyncStateStore {
         atomic_write(&self.base_path(), encrypted)
     }
 
+    pub fn load_bound_base(&self, location_fingerprint: &str) -> Result<BoundSyncBase> {
+        let state = self.load_state()?;
+        if state.remote_location_fingerprint.as_deref() != Some(location_fingerprint) {
+            return Ok(BoundSyncBase {
+                encrypted: None,
+                commit_id: None,
+            });
+        }
+        let Some(base) = self.load_base()? else {
+            return Ok(BoundSyncBase {
+                encrypted: None,
+                commit_id: None,
+            });
+        };
+        let hash = hex(&Sha256::digest(&base));
+        if state.base_sha256.as_deref() != Some(hash.as_str()) {
+            return Ok(BoundSyncBase {
+                encrypted: None,
+                commit_id: None,
+            });
+        }
+        Ok(BoundSyncBase {
+            encrypted: Some(base),
+            commit_id: state.base_commit_id,
+        })
+    }
+
+    pub fn commit_bound_base(
+        &self,
+        encrypted: &[u8],
+        location_fingerprint: String,
+        base_commit_id: Option<String>,
+    ) -> Result<()> {
+        self.commit_base(encrypted)?;
+        let mut state = self.load_state()?;
+        state.remote_location_fingerprint = Some(location_fingerprint);
+        state.base_commit_id = base_commit_id;
+        state.base_sha256 = Some(hex(&Sha256::digest(encrypted)));
+        self.store_state(&state)
+    }
+
     pub fn invalidate_base(&self) -> Result<()> {
         match fs::remove_file(self.base_path()) {
             Ok(()) => sync_directory(&self.directory),
@@ -139,9 +205,11 @@ impl FileSyncStateStore {
         };
         let state: PersistedSyncState =
             serde_json::from_slice(&bytes).map_err(|_| SyncError::State)?;
-        if state.version != STATE_VERSION {
+        if state.version != 1 && state.version != STATE_VERSION {
             return Err(SyncError::State);
         }
+        let mut state = state;
+        state.version = STATE_VERSION;
         Ok(state)
     }
 
@@ -257,6 +325,10 @@ fn action_name(action: SyncAction) -> &'static str {
     }
 }
 
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -278,6 +350,31 @@ mod tests {
         store.clear_suspension().unwrap();
         assert_eq!(store.load_state().unwrap().suspension, None);
         assert_eq!(&*store.load_base().unwrap().unwrap(), b"encrypted kdbx");
+        store
+            .commit_bound_base(
+                b"encrypted kdbx",
+                "location-fingerprint".into(),
+                Some("commit-id".into()),
+            )
+            .unwrap();
+        let bound = store.load_bound_base("location-fingerprint").unwrap();
+        assert_eq!(&*bound.encrypted.unwrap(), b"encrypted kdbx");
+        assert_eq!(bound.commit_id.as_deref(), Some("commit-id"));
+        store.commit_base(b"tampered encrypted kdbx").unwrap();
+        assert!(
+            store
+                .load_bound_base("location-fingerprint")
+                .unwrap()
+                .encrypted
+                .is_none()
+        );
+        assert!(
+            store
+                .load_bound_base("other-location")
+                .unwrap()
+                .encrypted
+                .is_none()
+        );
         assert_eq!(store.load_state().unwrap().pending_conflicts, 2);
         let encoded = fs::read_to_string(directory.path().join("diagnostics.json")).unwrap();
         assert!(!encoded.contains("password"));

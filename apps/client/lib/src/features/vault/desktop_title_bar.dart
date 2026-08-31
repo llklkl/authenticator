@@ -47,16 +47,17 @@ class DesktopTitleBar extends StatelessWidget {
     final colors = Theme.of(context).colorScheme;
     final bar = LayoutBuilder(
       builder: (context, constraints) {
-        final compact = constraints.maxWidth < 700;
+        final showSearch = constraints.maxWidth >= 900;
         return ColoredBox(
           color: colors.surfaceContainerLow,
           child: SizedBox(
-            height: _desktopWindowChromeEnabled && !compact ? 44 : 52,
-            child: compact
+            height: _desktopWindowChromeEnabled ? 44 : 52,
+            child: !showSearch
                 ? Row(
                     children: [
                       Expanded(child: leading),
                       ...actions,
+                      if (_desktopWindowChromeEnabled) const _WindowButtons(),
                       const SizedBox(width: 4),
                     ],
                   )

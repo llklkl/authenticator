@@ -22,7 +22,8 @@ The current offline alpha includes:
 - Provider-neutral three-way synchronization with a per-workspace encrypted
   baseline, ETag retry, encrypted backup rotation, remote-workspace identity
   checks, restore workflow, conflict preservation, and post-upload verification.
-- Per-workspace foreground WebDAV auto-sync with conditional writes, readable
+- Per-workspace foreground WebDAV auto-sync with conditional writes and Tencent
+  Cloud COS synchronization through an immutable commit graph, readable
   status, retry/backoff, optional non-metered-network policy, and passwords
   stored only through the operating-system credential store when requested.
 - Rust-backed random-password and BIP39-wordlist passphrase generation.
@@ -49,7 +50,8 @@ intentionally deferred.
 - Flutter owns the cross-platform user interface and platform integrations.
 - Rust owns OTP, KDBX, vault sessions, merge behavior, and synchronization.
 - Each workspace is a separate encrypted KDBX file.
-- The initial sync provider is WebDAV; no hosted account is required.
+- Remote providers share a Rust VFS contract. WebDAV and Tencent Cloud COS are
+  supported; no hosted application account is required.
 
 See [`AGENTS.md`](AGENTS.md) for engineering and security rules.
 See [`docs/synchronization.md`](docs/synchronization.md) for the conflict,

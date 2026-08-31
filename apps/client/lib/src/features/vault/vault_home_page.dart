@@ -13,6 +13,8 @@ enum _VaultSection { passwords, otp, other }
 
 enum _SmartFilter { none, favorites, recent }
 
+enum _CompactEntryAction { importOtp, passwordGenerator }
+
 enum _WorkspaceSyncState {
   unconfigured,
   credentialsNeeded,
@@ -1379,45 +1381,88 @@ class _VaultHomePageState extends State<VaultHomePage>
     ),
   );
 
-  Widget _buildEntryActions() => Row(
+  List<PopupMenuEntry<EntryType>> _entryTypeMenuItems() => [
+    PopupMenuItem(value: EntryType.login, child: Text(context.tr('登录密码'))),
+    const PopupMenuItem(value: EntryType.otp, child: Text('OTP')),
+    PopupMenuItem(
+      value: EntryType.recoveryCodes,
+      child: Text(context.tr('恢复码')),
+    ),
+    PopupMenuItem(value: EntryType.secureNote, child: Text(context.tr('安全笔记'))),
+  ];
+
+  Widget _buildEntryActions({bool compact = false}) => Row(
     mainAxisSize: MainAxisSize.min,
     children: [
       PopupMenuButton<EntryType>(
         enabled: _selectedWritable,
         tooltip: context.tr('新增条目'),
         onSelected: _addEntry,
-        itemBuilder: (_) => [
-          PopupMenuItem(
-            value: EntryType.login,
-            child: Text(context.tr('登录密码')),
-          ),
-          const PopupMenuItem(value: EntryType.otp, child: Text('OTP')),
-          PopupMenuItem(
-            value: EntryType.recoveryCodes,
-            child: Text(context.tr('恢复码')),
-          ),
-          PopupMenuItem(
-            value: EntryType.secureNote,
-            child: Text(context.tr('安全笔记')),
-          ),
-        ],
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8),
-          child: Row(
-            children: [const Icon(Icons.add, size: 19), Text(context.tr('新增'))],
-          ),
+        itemBuilder: (_) => _entryTypeMenuItems(),
+        icon: compact ? const Icon(Icons.add, size: 21) : null,
+        child: compact
+            ? null
+            : Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: Row(
+                  children: [
+                    const Icon(Icons.add, size: 19),
+                    Text(context.tr('新增')),
+                  ],
+                ),
+              ),
+      ),
+      if (compact)
+        PopupMenuButton<_CompactEntryAction>(
+          tooltip: context.tr('更多条目操作'),
+          onSelected: (action) {
+            switch (action) {
+              case _CompactEntryAction.importOtp:
+                _importOtp();
+              case _CompactEntryAction.passwordGenerator:
+                _showPasswordGenerator();
+            }
+          },
+          itemBuilder: (_) => [
+            PopupMenuItem(
+              value: _CompactEntryAction.importOtp,
+              enabled: _selectedWritable,
+              child: Row(
+                children: [
+                  const Icon(Icons.qr_code_2, size: 20),
+                  const SizedBox(width: 12),
+                  Text(context.tr('导入 OTP')),
+                ],
+              ),
+            ),
+            PopupMenuItem(
+              value: _CompactEntryAction.passwordGenerator,
+              enabled: _productivityService != null,
+              child: Row(
+                children: [
+                  const Icon(Icons.password_outlined, size: 20),
+                  const SizedBox(width: 12),
+                  Text(context.tr('密码生成器')),
+                ],
+              ),
+            ),
+          ],
+          icon: const Icon(Icons.more_vert, size: 21),
+        )
+      else ...[
+        TextButton.icon(
+          onPressed: _selectedWritable ? _importOtp : null,
+          icon: const Icon(Icons.qr_code_2, size: 19),
+          label: Text(context.tr('导入 OTP')),
         ),
-      ),
-      TextButton.icon(
-        onPressed: _selectedWritable ? _importOtp : null,
-        icon: const Icon(Icons.qr_code_2, size: 19),
-        label: Text(context.tr('导入 OTP')),
-      ),
-      IconButton(
-        onPressed: _productivityService == null ? null : _showPasswordGenerator,
-        tooltip: context.tr('密码生成器'),
-        icon: const Icon(Icons.password_outlined),
-      ),
+        IconButton(
+          onPressed: _productivityService == null
+              ? null
+              : _showPasswordGenerator,
+          tooltip: context.tr('密码生成器'),
+          icon: const Icon(Icons.password_outlined),
+        ),
+      ],
     ],
   );
 
@@ -1824,25 +1869,30 @@ class _VaultHomePageState extends State<VaultHomePage>
   );
 
   Widget _buildSectionBar({bool mobile = false}) => SizedBox(
-    height: mobile ? 88 : 48,
+    height: 48,
     child: mobile
-        ? Column(
+        ? Row(
             children: [
-              SizedBox(
-                height: 42,
-                child: Row(
-                  children: [
-                    IconButton(
-                      tooltip: context.tr('选择文件夹'),
-                      onPressed: _showMobileFolders,
-                      icon: const Icon(Icons.folder_open_outlined, size: 20),
+              IconButton(
+                tooltip: context.tr('选择文件夹'),
+                onPressed: _showMobileFolders,
+                icon: const Icon(Icons.folder_open_outlined, size: 20),
+              ),
+              Expanded(
+                child: LayoutBuilder(
+                  builder: (context, constraints) => SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(
+                        minWidth: constraints.maxWidth,
+                      ),
+                      child: Center(child: _sectionChoices()),
                     ),
-                    Expanded(child: Center(child: _sectionChoices())),
-                    const SizedBox(width: 48),
-                  ],
+                  ),
                 ),
               ),
-              SizedBox(height: 44, child: _buildEntryActions()),
+              _buildEntryActions(compact: true),
+              const SizedBox(width: 4),
             ],
           )
         : Row(
@@ -2206,7 +2256,7 @@ class _VaultHomePageState extends State<VaultHomePage>
       children: [
         _buildSectionBar(mobile: true),
         Padding(
-          padding: const EdgeInsets.fromLTRB(12, 2, 12, 8),
+          padding: const EdgeInsets.fromLTRB(12, 4, 12, 10),
           child: _buildSearchField(),
         ),
         Expanded(

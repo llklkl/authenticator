@@ -38,7 +38,7 @@ void main() {
       expect(workspaces.single.id, migratedId);
       expect(await File('${registry.path}.bak').exists(), isTrue);
       final versioned = jsonDecode(await registry.readAsString()) as Map;
-      expect(versioned['version'], 3);
+      expect(versioned['version'], 4);
       expect(versioned['autoLockSeconds'], 300);
       expect(versioned['stalePasswordDays'], 180);
       expect(versioned['themeMode'], 'system');
@@ -114,51 +114,116 @@ void main() {
       'webdav-secret-value',
     );
     final migrated = jsonDecode(await registry.readAsString()) as Map;
-    expect(migrated['version'], 3);
+    expect(migrated['version'], 4);
   });
 
-  test('application preferences persist in registry version 3', () async {
+  test(
+    'application preferences persist after registry version 4 migration',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'vault-registry-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final registry = File('${directory.path}/workspaces.json');
+      await registry.writeAsString(
+        jsonEncode({
+          'version': 2,
+          'autoLockSeconds': 300,
+          'stalePasswordDays': 180,
+          'workspaces': <Object>[],
+        }),
+      );
+      String normalize(String value) {
+        if (value.isEmpty ||
+            value.codeUnits.any((code) => code < 33 || code > 126)) {
+          throw const FormatException();
+        }
+        return value;
+      }
+
+      final service = NativeVaultService.forTesting(
+        registryFile: registry,
+        vaultDirectory: directory,
+        platformSecurity: const NoopPlatformSecurityService(),
+        newWorkspaceId: () => 'unused',
+        normalizePasswordSymbols: normalize,
+      );
+      await service.loadWorkspaces();
+      await service.setThemePreference(AppThemePreference.dark);
+      await service.setLanguage(AppLanguage.english);
+      await service.setPasswordSymbols('@#');
+
+      final reloaded = NativeVaultService.forTesting(
+        registryFile: registry,
+        vaultDirectory: directory,
+        platformSecurity: const NoopPlatformSecurityService(),
+        newWorkspaceId: () => 'unused',
+        normalizePasswordSymbols: normalize,
+      );
+      await reloaded.loadWorkspaces();
+      expect(reloaded.preferences.value.theme, AppThemePreference.dark);
+      expect(reloaded.preferences.value.language, AppLanguage.english);
+      expect(reloaded.preferences.value.passwordSymbols, '@#');
+    },
+  );
+
+  test('COS credentials are excluded from the workspace registry', () async {
+    FlutterSecureStorage.setMockInitialValues({});
     final directory = await Directory.systemTemp.createTemp('vault-registry-');
     addTearDown(() => directory.delete(recursive: true));
     final registry = File('${directory.path}/workspaces.json');
+    const workspace = WorkspaceInfo(
+      id: '018f47d2-c215-7b71-9c1d-7af181fef264',
+      name: 'Personal',
+      path: '/vault.kdbx',
+    );
     await registry.writeAsString(
       jsonEncode({
-        'version': 2,
+        'version': 4,
         'autoLockSeconds': 300,
         'stalePasswordDays': 180,
-        'workspaces': <Object>[],
+        'themeMode': 'system',
+        'locale': 'zh_CN',
+        'passwordSymbols': '!@#',
+        'workspaces': [workspace.toJson()],
       }),
     );
-    String normalize(String value) {
-      if (value.isEmpty ||
-          value.codeUnits.any((code) => code < 33 || code > 126)) {
-        throw const FormatException();
-      }
-      return value;
-    }
-
     final service = NativeVaultService.forTesting(
       registryFile: registry,
       vaultDirectory: directory,
       platformSecurity: const NoopPlatformSecurityService(),
       newWorkspaceId: () => 'unused',
-      normalizePasswordSymbols: normalize,
+      normalizePasswordSymbols: (value) => value,
     );
-    await service.loadWorkspaces();
-    await service.setThemePreference(AppThemePreference.dark);
-    await service.setLanguage(AppLanguage.english);
-    await service.setPasswordSymbols('@#');
+    final loaded = (await service.loadWorkspaces()).single;
+    await service.saveWorkspaceSync(
+      loaded,
+      const WorkspaceSyncSettings(
+        provider: SyncProviderType.tencentCos,
+        bucket: 'vault-1250000000',
+        region: 'ap-guangzhou',
+        prefix: 'authenticator/personal',
+        passwordStored: true,
+      ),
+      secretId: 'private-secret-id',
+      secretKey: 'private-secret-key',
+    );
 
-    final reloaded = NativeVaultService.forTesting(
-      registryFile: registry,
-      vaultDirectory: directory,
-      platformSecurity: const NoopPlatformSecurityService(),
-      newWorkspaceId: () => 'unused',
-      normalizePasswordSymbols: normalize,
+    final source = await registry.readAsString();
+    expect(source, isNot(contains('private-secret-id')));
+    expect(source, isNot(contains('private-secret-key')));
+    const secureStorage = FlutterSecureStorage();
+    expect(
+      await secureStorage.read(
+        key: 'authenticator_vault.cos.${workspace.id}.secret_id',
+      ),
+      'private-secret-id',
     );
-    await reloaded.loadWorkspaces();
-    expect(reloaded.preferences.value.theme, AppThemePreference.dark);
-    expect(reloaded.preferences.value.language, AppLanguage.english);
-    expect(reloaded.preferences.value.passwordSymbols, '@#');
+    expect(
+      await secureStorage.read(
+        key: 'authenticator_vault.cos.${workspace.id}.secret_key',
+      ),
+      'private-secret-key',
+    );
   });
 }

@@ -22,6 +22,12 @@ pub enum SyncError {
     InvalidConfiguration,
     #[error("the sync provider does not support safe conditional writes")]
     ConditionalWritesUnsupported,
+    #[error("the remote storage operation is unsupported")]
+    UnsupportedOperation,
+    #[error("the remote storage history is invalid")]
+    InvalidRemoteHistory,
+    #[error("the remote storage versioning configuration is unsafe")]
+    UnsafeBucketVersioning,
     #[error("synchronization state could not be persisted")]
     State,
     #[error("synchronization diagnostics could not be persisted")]

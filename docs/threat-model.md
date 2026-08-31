@@ -17,8 +17,15 @@ and explicit conflict reporting.
 Implemented in the Android alpha are redacted Rust errors/debug output,
 Rust-owned unlocked sessions, configurable background locking (immediate to 15
 minutes), immediate screen-off locking, conditional WebDAV writes,
-post-upload verification, encrypted local/sync backups, and atomic KDBX
-replacement. The UI intentionally does not persist WebDAV credentials.
+create-only append-log COS writes, post-upload verification, encrypted local/sync backups, and atomic KDBX
+replacement. The UI never writes provider secret credentials to the workspace
+registry.
+
+COS bucket, region, and prefix are non-secret configuration. SecretId and
+SecretKey are provider credentials and are stored only in OS secure storage when
+the user opts in. COS hosts are derived from validated configuration, redirects
+are disabled, response bodies are discarded on error, and bucket versioning or
+malformed remote history causes synchronization to fail closed.
 
 Quick unlock is disabled by default and opt-in per workspace. Rust encrypts each
 master password under an independent KEK; Android Keystore protects the opaque

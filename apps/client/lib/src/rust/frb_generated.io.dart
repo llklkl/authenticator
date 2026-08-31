@@ -34,6 +34,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PlatformInt64 dco_decode_box_autoadd_i_64(dynamic raw);
 
   @protected
+  SyncProviderConfigView dco_decode_box_autoadd_sync_provider_config_view(
+    dynamic raw,
+  );
+
+  @protected
   int dco_decode_box_autoadd_u_32(dynamic raw);
 
   @protected
@@ -174,6 +179,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   SyncDiagnosticView dco_decode_sync_diagnostic_view(dynamic raw);
 
   @protected
+  SyncProviderConfigView dco_decode_sync_provider_config_view(dynamic raw);
+
+  @protected
+  SyncProviderKindView dco_decode_sync_provider_kind_view(dynamic raw);
+
+  @protected
   SyncResult dco_decode_sync_result(dynamic raw);
 
   @protected
@@ -232,6 +243,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   PlatformInt64 sse_decode_box_autoadd_i_64(SseDeserializer deserializer);
+
+  @protected
+  SyncProviderConfigView sse_decode_box_autoadd_sync_provider_config_view(
+    SseDeserializer deserializer,
+  );
 
   @protected
   int sse_decode_box_autoadd_u_32(SseDeserializer deserializer);
@@ -422,6 +438,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  SyncProviderConfigView sse_decode_sync_provider_config_view(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  SyncProviderKindView sse_decode_sync_provider_kind_view(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   SyncResult sse_decode_sync_result(SseDeserializer deserializer);
 
   @protected
@@ -488,6 +514,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_box_autoadd_i_64(
     PlatformInt64 self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_sync_provider_config_view(
+    SyncProviderConfigView self,
     SseSerializer serializer,
   );
 
@@ -728,6 +760,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_sync_diagnostic_view(
     SyncDiagnosticView self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_sync_provider_config_view(
+    SyncProviderConfigView self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_sync_provider_kind_view(
+    SyncProviderKindView self,
     SseSerializer serializer,
   );
 

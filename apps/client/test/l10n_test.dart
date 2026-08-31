@@ -13,5 +13,6 @@ void main() {
     expect(messages['通用'], 'General');
     expect(messages['密码生成器'], 'Password generator');
     expect(messages['这个 Workspace 还没有 OTP'], isNotNull);
+    expect(messages['数据由你掌控'], 'Your data stays in your control');
   });
 }

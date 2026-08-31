@@ -100,29 +100,49 @@ class WorkspaceInfo {
   );
 }
 
+enum SyncProviderType { webDav, tencentCos }
+
 class WorkspaceSyncSettings {
   const WorkspaceSyncSettings({
+    this.provider = SyncProviderType.webDav,
     this.endpoint = '',
     this.username = '',
     this.allowInsecureHttp = false,
+    this.bucket = '',
+    this.region = '',
+    this.prefix = '',
     this.autoSync = true,
     this.nonMeteredOnly = false,
     this.passwordStored = false,
   });
 
+  final SyncProviderType provider;
   final String endpoint;
   final String username;
   final bool allowInsecureHttp;
+  final String bucket;
+  final String region;
+  final String prefix;
   final bool autoSync;
   final bool nonMeteredOnly;
   final bool passwordStored;
 
-  bool get configured => endpoint.trim().isNotEmpty;
+  bool get configured => switch (provider) {
+    SyncProviderType.webDav => endpoint.trim().isNotEmpty,
+    SyncProviderType.tencentCos =>
+      bucket.trim().isNotEmpty &&
+          region.trim().isNotEmpty &&
+          prefix.trim().isNotEmpty,
+  };
 
   Map<String, Object> toJson() => {
+    'provider': provider.name,
     'endpoint': endpoint,
     'username': username,
     'allowInsecureHttp': allowInsecureHttp,
+    'bucket': bucket,
+    'region': region,
+    'prefix': prefix,
     'autoSync': autoSync,
     'nonMeteredOnly': nonMeteredOnly,
     'passwordStored': passwordStored,
@@ -130,9 +150,16 @@ class WorkspaceSyncSettings {
 
   factory WorkspaceSyncSettings.fromJson(Map<String, Object?> json) =>
       WorkspaceSyncSettings(
+        provider: switch (json['provider']) {
+          'tencentCos' => SyncProviderType.tencentCos,
+          _ => SyncProviderType.webDav,
+        },
         endpoint: json['endpoint'] as String? ?? '',
         username: json['username'] as String? ?? '',
         allowInsecureHttp: json['allowInsecureHttp'] as bool? ?? false,
+        bucket: json['bucket'] as String? ?? '',
+        region: json['region'] as String? ?? '',
+        prefix: json['prefix'] as String? ?? '',
         autoSync: json['autoSync'] as bool? ?? true,
         nonMeteredOnly: json['nonMeteredOnly'] as bool? ?? false,
         passwordStored: json['passwordStored'] as bool? ?? false,
@@ -305,6 +332,22 @@ class WebDavSettings {
   final bool allowInsecureHttp;
 }
 
+class TencentCosSettings {
+  const TencentCosSettings({
+    required this.bucket,
+    required this.region,
+    required this.prefix,
+    required this.secretId,
+    required this.secretKey,
+  });
+
+  final String bucket;
+  final String region;
+  final String prefix;
+  final String secretId;
+  final String secretKey;
+}
+
 enum SyncAction { createdRemote, uploaded, downloaded, merged, unchanged }
 
 class SyncSummary {
@@ -410,6 +453,11 @@ abstract interface class VaultService {
     String workspaceId,
     WebDavSettings settings,
   );
+  Future<SyncSummary> syncTencentCos(
+    BigInt handleId,
+    String workspaceId,
+    TencentCosSettings settings,
+  );
 }
 
 class QuickUnlockOutcome {
@@ -511,11 +559,15 @@ abstract interface class ProductivityVaultService
     WorkspaceInfo workspace,
     WorkspaceSyncSettings settings, {
     String? password,
+    String? secretId,
+    String? secretKey,
   });
   Future<SyncSummary> syncConfiguredWorkspace(
     BigInt handleId,
     WorkspaceInfo workspace, {
     String? passwordOverride,
+    String? secretIdOverride,
+    String? secretKeyOverride,
   });
   bool isVaultWritable(BigInt handleId);
   String vaultFormat(BigInt handleId);
@@ -540,6 +592,8 @@ abstract interface class ProductivityVaultService
     WorkspaceInfo workspace,
     RestoreSyncDecision decision, {
     String? passwordOverride,
+    String? secretIdOverride,
+    String? secretKeyOverride,
   });
   Future<List<SyncDiagnosticItem>> listSyncDiagnostics(String workspaceId);
   Future<SyncStateItem> syncState(String workspaceId);
@@ -638,7 +692,7 @@ class NativeVaultService implements ProductivityVaultService {
       } else {
         final root = decoded as Map<String, Object?>;
         final version = root['version'];
-        if (version != 1 && version != 2 && version != 3) {
+        if (version != 1 && version != 2 && version != 3 && version != 4) {
           throw const FormatException();
         }
         autoLockSeconds = root['autoLockSeconds']! as int;
@@ -650,13 +704,13 @@ class NativeVaultService implements ProductivityVaultService {
               return WorkspaceInfo.fromJson(value! as Map<String, Object?>);
             })
             .toList(growable: false);
-        if (version == 2 || version == 3) {
+        if (version == 2 || version == 3 || version == 4) {
           stalePasswordDays = root['stalePasswordDays'] as int? ?? 180;
           if (!const [0, 90, 180, 365].contains(stalePasswordDays)) {
             throw const FormatException();
           }
         }
-        if (version == 3) {
+        if (version == 3 || version == 4) {
           preferences.value = AppPreferences(
             theme: _themePreferenceFromJson(root['themeMode']! as String),
             language: _languageFromJson(root['locale']! as String),
@@ -664,7 +718,8 @@ class NativeVaultService implements ProductivityVaultService {
               root['passwordSymbols']! as String,
             ),
           );
-        } else {
+        }
+        if (version != 4) {
           await _registryFile.copy('${_registryFile.path}.bak');
           await _writeRegistry(workspaces);
         }
@@ -1149,6 +1204,24 @@ class NativeVaultService implements ProductivityVaultService {
   }
 
   @override
+  Future<SyncSummary> syncTencentCos(
+    BigInt handleId,
+    String workspaceId,
+    TencentCosSettings settings,
+  ) async {
+    final result = await native.syncTencentCos(
+      handleId: handleId,
+      bucket: settings.bucket,
+      region: settings.region,
+      prefix: settings.prefix,
+      secretId: settings.secretId,
+      secretKey: settings.secretKey,
+      stateDirectory: _syncDirectory(workspaceId).path,
+    );
+    return _fromNativeSyncResult(result);
+  }
+
+  @override
   bool isVaultWritable(BigInt handleId) =>
       _vaultFormats[handleId]?.writable ?? true;
 
@@ -1226,28 +1299,64 @@ class NativeVaultService implements ProductivityVaultService {
     WorkspaceInfo workspace,
     RestoreSyncDecision decision, {
     String? passwordOverride,
+    String? secretIdOverride,
+    String? secretKeyOverride,
   }) async {
     final config = workspace.sync;
     if (!config.configured) throw StateError('sync is not configured');
-    final password = passwordOverride?.isNotEmpty == true
-        ? passwordOverride
-        : await _secureStorage.read(key: _webDavPasswordKey(workspace.id));
-    if (password == null || password.isEmpty) {
-      throw StateError('sync credentials are unavailable');
+    final nativeDecision = switch (decision) {
+      RestoreSyncDecision.merge => native.RestoreDecisionView.merge,
+      RestoreSyncDecision.replaceRemote =>
+        native.RestoreDecisionView.replaceRemote,
+    };
+    final native.SyncResult result;
+    if (config.provider == SyncProviderType.webDav) {
+      final password = passwordOverride?.isNotEmpty == true
+          ? passwordOverride
+          : await _secureStorage.read(key: _webDavPasswordKey(workspace.id));
+      if (password == null || password.isEmpty) {
+        throw StateError('sync credentials are unavailable');
+      }
+      result = await native.completeRestoreWebdav(
+        handleId: handleId,
+        endpoint: config.endpoint,
+        username: config.username,
+        password: password,
+        allowInsecureHttp: config.allowInsecureHttp,
+        stateDirectory: _syncDirectory(workspace.id).path,
+        decision: nativeDecision,
+      );
+    } else {
+      final secretId = secretIdOverride?.isNotEmpty == true
+          ? secretIdOverride
+          : await _secureStorage.read(key: _cosSecretIdKey(workspace.id));
+      final secretKey = secretKeyOverride?.isNotEmpty == true
+          ? secretKeyOverride
+          : await _secureStorage.read(key: _cosSecretKeyKey(workspace.id));
+      if (secretId == null ||
+          secretId.isEmpty ||
+          secretKey == null ||
+          secretKey.isEmpty) {
+        throw StateError('sync credentials are unavailable');
+      }
+      result = await native.completeRestore(
+        handleId: handleId,
+        provider: native.SyncProviderConfigView(
+          kind: native.SyncProviderKindView.tencentCos,
+          endpoint: '',
+          username: '',
+          password: '',
+          allowInsecureHttp: false,
+          bucket: config.bucket,
+          region: config.region,
+          prefix: config.prefix,
+          secretId: secretId,
+          secretKey: secretKey,
+        ),
+        stateDirectory: _syncDirectory(workspace.id).path,
+        decision: nativeDecision,
+      );
     }
-    final result = await native.completeRestoreWebdav(
-      handleId: handleId,
-      endpoint: config.endpoint,
-      username: config.username,
-      password: password,
-      allowInsecureHttp: config.allowInsecureHttp,
-      stateDirectory: _syncDirectory(workspace.id).path,
-      decision: switch (decision) {
-        RestoreSyncDecision.merge => native.RestoreDecisionView.merge,
-        RestoreSyncDecision.replaceRemote =>
-          native.RestoreDecisionView.replaceRemote,
-      },
-    );
     return _fromNativeSyncResult(result);
   }
 
@@ -1355,19 +1464,40 @@ class NativeVaultService implements ProductivityVaultService {
     WorkspaceInfo workspace,
     WorkspaceSyncSettings settings, {
     String? password,
+    String? secretId,
+    String? secretKey,
   }) async {
-    final key = _webDavPasswordKey(workspace.id);
-    final shouldStore =
-        settings.passwordStored && password != null && password.isNotEmpty;
-    if (shouldStore) {
-      await _secureStorage.write(key: key, value: password);
-    } else if (!settings.passwordStored) {
-      await _secureStorage.delete(key: key);
+    final webDavKey = _webDavPasswordKey(workspace.id);
+    final cosIdKey = _cosSecretIdKey(workspace.id);
+    final cosKeyKey = _cosSecretKeyKey(workspace.id);
+    if (settings.provider == SyncProviderType.webDav) {
+      if (settings.passwordStored && password?.isNotEmpty == true) {
+        await _secureStorage.write(key: webDavKey, value: password);
+      } else if (!settings.passwordStored) {
+        await _secureStorage.delete(key: webDavKey);
+      }
+      await _secureStorage.delete(key: cosIdKey);
+      await _secureStorage.delete(key: cosKeyKey);
+    } else {
+      if (settings.passwordStored &&
+          secretId?.isNotEmpty == true &&
+          secretKey?.isNotEmpty == true) {
+        await _secureStorage.write(key: cosIdKey, value: secretId);
+        await _secureStorage.write(key: cosKeyKey, value: secretKey);
+      } else if (!settings.passwordStored) {
+        await _secureStorage.delete(key: cosIdKey);
+        await _secureStorage.delete(key: cosKeyKey);
+      }
+      await _secureStorage.delete(key: webDavKey);
     }
     final persisted = WorkspaceSyncSettings(
+      provider: settings.provider,
       endpoint: settings.endpoint.trim(),
       username: settings.username,
       allowInsecureHttp: settings.allowInsecureHttp,
+      bucket: settings.bucket.trim(),
+      region: settings.region.trim(),
+      prefix: settings.prefix.trim().replaceAll(RegExp(r'^/+|/+$'), ''),
       autoSync: settings.autoSync,
       nonMeteredOnly: settings.nonMeteredOnly,
       passwordStored: settings.passwordStored,
@@ -1387,23 +1517,50 @@ class NativeVaultService implements ProductivityVaultService {
     BigInt handleId,
     WorkspaceInfo workspace, {
     String? passwordOverride,
+    String? secretIdOverride,
+    String? secretKeyOverride,
   }) async {
     final config = workspace.sync;
     if (!config.configured) throw StateError('sync is not configured');
-    final password = passwordOverride?.isNotEmpty == true
-        ? passwordOverride
-        : await _secureStorage.read(key: _webDavPasswordKey(workspace.id));
-    if (password == null || password.isEmpty) {
+    if (config.provider == SyncProviderType.webDav) {
+      final password = passwordOverride?.isNotEmpty == true
+          ? passwordOverride
+          : await _secureStorage.read(key: _webDavPasswordKey(workspace.id));
+      if (password == null || password.isEmpty) {
+        throw StateError('sync credentials are unavailable');
+      }
+      return syncWebDav(
+        handleId,
+        workspace.id,
+        WebDavSettings(
+          endpoint: config.endpoint,
+          username: config.username,
+          password: password,
+          allowInsecureHttp: config.allowInsecureHttp,
+        ),
+      );
+    }
+    final secretId = secretIdOverride?.isNotEmpty == true
+        ? secretIdOverride
+        : await _secureStorage.read(key: _cosSecretIdKey(workspace.id));
+    final secretKey = secretKeyOverride?.isNotEmpty == true
+        ? secretKeyOverride
+        : await _secureStorage.read(key: _cosSecretKeyKey(workspace.id));
+    if (secretId == null ||
+        secretId.isEmpty ||
+        secretKey == null ||
+        secretKey.isEmpty) {
       throw StateError('sync credentials are unavailable');
     }
-    return syncWebDav(
+    return syncTencentCos(
       handleId,
       workspace.id,
-      WebDavSettings(
-        endpoint: config.endpoint,
-        username: config.username,
-        password: password,
-        allowInsecureHttp: config.allowInsecureHttp,
+      TencentCosSettings(
+        bucket: config.bucket,
+        region: config.region,
+        prefix: config.prefix,
+        secretId: secretId,
+        secretKey: secretKey,
       ),
     );
   }
@@ -1566,7 +1723,7 @@ class NativeVaultService implements ProductivityVaultService {
     final temporary = File('${_registryFile.path}.tmp');
     await temporary.writeAsString(
       jsonEncode({
-        'version': 3,
+        'version': 4,
         'autoLockSeconds': autoLockSeconds,
         'stalePasswordDays': stalePasswordDays,
         'themeMode': _themePreferenceToJson(preferences.value.theme),
@@ -1666,6 +1823,12 @@ PasswordHealthRisk _fromNativeHealthRisk(native.HealthRiskView value) =>
 
 String _webDavPasswordKey(String workspaceId) =>
     'authenticator_vault.webdav.$workspaceId.password';
+
+String _cosSecretIdKey(String workspaceId) =>
+    'authenticator_vault.cos.$workspaceId.secret_id';
+
+String _cosSecretKeyKey(String workspaceId) =>
+    'authenticator_vault.cos.$workspaceId.secret_key';
 
 String _themePreferenceToJson(AppThemePreference value) => value.name;
 

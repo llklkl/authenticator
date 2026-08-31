@@ -38,7 +38,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 316157133;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -1228047113;
 
 // Section: executor
 
@@ -186,6 +186,49 @@ fn wire__crate__api__simple__close_vault_impl(
                 let output_ok = crate::api::simple::close_vault(api_handle_id)?;
                 Ok(output_ok)
             })())
+        },
+    )
+}
+fn wire__crate__api__simple__complete_restore_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "complete_restore",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_handle_id = <u64>::sse_decode(&mut deserializer);
+            let api_provider =
+                <crate::api::simple::SyncProviderConfigView>::sse_decode(&mut deserializer);
+            let api_state_directory = <String>::sse_decode(&mut deserializer);
+            let api_decision =
+                <crate::api::simple::RestoreDecisionView>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, crate::api::simple::BridgeError>((move || {
+                    let output_ok = crate::api::simple::complete_restore(
+                        api_handle_id,
+                        api_provider,
+                        api_state_directory,
+                        api_decision,
+                    )?;
+                    Ok(output_ok)
+                })())
+            }
         },
     )
 }
@@ -1878,6 +1921,93 @@ fn wire__crate__api__simple__sync_state_impl(
         },
     )
 }
+fn wire__crate__api__simple__sync_tencent_cos_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "sync_tencent_cos",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_handle_id = <u64>::sse_decode(&mut deserializer);
+            let api_bucket = <String>::sse_decode(&mut deserializer);
+            let api_region = <String>::sse_decode(&mut deserializer);
+            let api_prefix = <String>::sse_decode(&mut deserializer);
+            let api_secret_id = <String>::sse_decode(&mut deserializer);
+            let api_secret_key = <String>::sse_decode(&mut deserializer);
+            let api_state_directory = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, crate::api::simple::BridgeError>((move || {
+                    let output_ok = crate::api::simple::sync_tencent_cos(
+                        api_handle_id,
+                        api_bucket,
+                        api_region,
+                        api_prefix,
+                        api_secret_id,
+                        api_secret_key,
+                        api_state_directory,
+                    )?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__simple__sync_vault_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "sync_vault",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_handle_id = <u64>::sse_decode(&mut deserializer);
+            let api_provider =
+                <crate::api::simple::SyncProviderConfigView>::sse_decode(&mut deserializer);
+            let api_state_directory = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, crate::api::simple::BridgeError>((move || {
+                    let output_ok = crate::api::simple::sync_vault(
+                        api_handle_id,
+                        api_provider,
+                        api_state_directory,
+                    )?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
 fn wire__crate__api__simple__sync_webdav_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -2125,7 +2255,9 @@ impl SseDecode for crate::api::simple::BridgeError {
             28 => crate::api::simple::BridgeError::SyncStateFailed,
             29 => crate::api::simple::BridgeError::SyncDiagnosticsFailed,
             30 => crate::api::simple::BridgeError::SyncRestoreDecisionRequired,
-            31 => crate::api::simple::BridgeError::QuickUnlockFailed,
+            31 => crate::api::simple::BridgeError::SyncInvalidRemoteHistory,
+            32 => crate::api::simple::BridgeError::SyncUnsafeBucketVersioning,
+            33 => crate::api::simple::BridgeError::QuickUnlockFailed,
             _ => unreachable!("Invalid variant for BridgeError: {}", inner),
         };
     }
@@ -2674,6 +2806,46 @@ impl SseDecode for crate::api::simple::SyncDiagnosticView {
     }
 }
 
+impl SseDecode for crate::api::simple::SyncProviderConfigView {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_kind = <crate::api::simple::SyncProviderKindView>::sse_decode(deserializer);
+        let mut var_endpoint = <String>::sse_decode(deserializer);
+        let mut var_username = <String>::sse_decode(deserializer);
+        let mut var_password = <String>::sse_decode(deserializer);
+        let mut var_allowInsecureHttp = <bool>::sse_decode(deserializer);
+        let mut var_bucket = <String>::sse_decode(deserializer);
+        let mut var_region = <String>::sse_decode(deserializer);
+        let mut var_prefix = <String>::sse_decode(deserializer);
+        let mut var_secretId = <String>::sse_decode(deserializer);
+        let mut var_secretKey = <String>::sse_decode(deserializer);
+        return crate::api::simple::SyncProviderConfigView {
+            kind: var_kind,
+            endpoint: var_endpoint,
+            username: var_username,
+            password: var_password,
+            allow_insecure_http: var_allowInsecureHttp,
+            bucket: var_bucket,
+            region: var_region,
+            prefix: var_prefix,
+            secret_id: var_secretId,
+            secret_key: var_secretKey,
+        };
+    }
+}
+
+impl SseDecode for crate::api::simple::SyncProviderKindView {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::api::simple::SyncProviderKindView::WebDav,
+            1 => crate::api::simple::SyncProviderKindView::TencentCos,
+            _ => unreachable!("Invalid variant for SyncProviderKindView: {}", inner),
+        };
+    }
+}
+
 impl SseDecode for crate::api::simple::SyncResult {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -2938,97 +3110,100 @@ fn pde_ffi_dispatcher_primary_impl(
         3 => {
             wire__crate__api__simple__clear_sync_diagnostics_impl(port, ptr, rust_vec_len, data_len)
         }
-        5 => wire__crate__api__simple__complete_restore_webdav_impl(
+        5 => wire__crate__api__simple__complete_restore_impl(port, ptr, rust_vec_len, data_len),
+        6 => wire__crate__api__simple__complete_restore_webdav_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        6 => wire__crate__api__simple__create_entry_impl(port, ptr, rust_vec_len, data_len),
-        7 => {
+        7 => wire__crate__api__simple__create_entry_impl(port, ptr, rust_vec_len, data_len),
+        8 => {
             wire__crate__api__simple__create_entry_in_group_impl(port, ptr, rust_vec_len, data_len)
         }
-        8 => wire__crate__api__simple__create_group_impl(port, ptr, rust_vec_len, data_len),
-        9 => {
+        9 => wire__crate__api__simple__create_group_impl(port, ptr, rust_vec_len, data_len),
+        10 => {
             wire__crate__api__simple__create_group_with_icon_impl(port, ptr, rust_vec_len, data_len)
         }
-        10 => wire__crate__api__simple__create_vault_impl(port, ptr, rust_vec_len, data_len),
-        14 => wire__crate__api__simple__delete_entry_impl(port, ptr, rust_vec_len, data_len),
-        15 => wire__crate__api__simple__empty_recycle_bin_impl(port, ptr, rust_vec_len, data_len),
-        16 => wire__crate__api__simple__enable_recycle_bin_impl(port, ptr, rust_vec_len, data_len),
-        17 => wire__crate__api__simple__export_entry_attachment_impl(
+        11 => wire__crate__api__simple__create_vault_impl(port, ptr, rust_vec_len, data_len),
+        15 => wire__crate__api__simple__delete_entry_impl(port, ptr, rust_vec_len, data_len),
+        16 => wire__crate__api__simple__empty_recycle_bin_impl(port, ptr, rust_vec_len, data_len),
+        17 => wire__crate__api__simple__enable_recycle_bin_impl(port, ptr, rust_vec_len, data_len),
+        18 => wire__crate__api__simple__export_entry_attachment_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        18 => wire__crate__api__simple__export_sync_diagnostics_impl(
+        19 => wire__crate__api__simple__export_sync_diagnostics_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        22 => wire__crate__api__simple__import_otp_to_vault_impl(port, ptr, rust_vec_len, data_len),
-        24 => wire__crate__api__simple__import_vault_impl(port, ptr, rust_vec_len, data_len),
-        25 => wire__crate__api__simple__init_app_impl(port, ptr, rust_vec_len, data_len),
-        27 => wire__crate__api__simple__list_sync_backups_impl(port, ptr, rust_vec_len, data_len),
-        28 => wire__crate__api__simple__list_sync_conflicts_impl(port, ptr, rust_vec_len, data_len),
-        29 => {
+        23 => wire__crate__api__simple__import_otp_to_vault_impl(port, ptr, rust_vec_len, data_len),
+        25 => wire__crate__api__simple__import_vault_impl(port, ptr, rust_vec_len, data_len),
+        26 => wire__crate__api__simple__init_app_impl(port, ptr, rust_vec_len, data_len),
+        28 => wire__crate__api__simple__list_sync_backups_impl(port, ptr, rust_vec_len, data_len),
+        29 => wire__crate__api__simple__list_sync_conflicts_impl(port, ptr, rust_vec_len, data_len),
+        30 => {
             wire__crate__api__simple__list_sync_diagnostics_impl(port, ptr, rust_vec_len, data_len)
         }
-        32 => wire__crate__api__simple__move_entry_impl(port, ptr, rust_vec_len, data_len),
-        33 => wire__crate__api__simple__move_group_impl(port, ptr, rust_vec_len, data_len),
-        35 => wire__crate__api__simple__open_vault_impl(port, ptr, rust_vec_len, data_len),
-        36 => wire__crate__api__simple__open_vaults_with_quick_unlock_impl(
+        33 => wire__crate__api__simple__move_entry_impl(port, ptr, rust_vec_len, data_len),
+        34 => wire__crate__api__simple__move_group_impl(port, ptr, rust_vec_len, data_len),
+        36 => wire__crate__api__simple__open_vault_impl(port, ptr, rust_vec_len, data_len),
+        37 => wire__crate__api__simple__open_vaults_with_quick_unlock_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        37 => wire__crate__api__simple__permanently_delete_group_impl(
+        38 => wire__crate__api__simple__permanently_delete_group_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        38 => wire__crate__api__simple__prepare_quick_unlock_enrollment_impl(
+        39 => wire__crate__api__simple__prepare_quick_unlock_enrollment_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        39 => wire__crate__api__simple__remove_entry_attachment_impl(
+        40 => wire__crate__api__simple__remove_entry_attachment_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        41 => wire__crate__api__simple__remove_quick_unlock_material_impl(
+        42 => wire__crate__api__simple__remove_quick_unlock_material_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        42 => wire__crate__api__simple__rename_entry_attachment_impl(
+        43 => wire__crate__api__simple__rename_entry_attachment_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        43 => wire__crate__api__simple__rename_group_impl(port, ptr, rust_vec_len, data_len),
-        44 => {
+        44 => wire__crate__api__simple__rename_group_impl(port, ptr, rust_vec_len, data_len),
+        45 => {
             wire__crate__api__simple__resolve_sync_conflict_impl(port, ptr, rust_vec_len, data_len)
         }
-        45 => wire__crate__api__simple__restore_entry_impl(port, ptr, rust_vec_len, data_len),
-        46 => wire__crate__api__simple__restore_group_impl(port, ptr, rust_vec_len, data_len),
-        47 => wire__crate__api__simple__restore_sync_backup_impl(port, ptr, rust_vec_len, data_len),
-        49 => wire__crate__api__simple__set_entry_favorite_impl(port, ptr, rust_vec_len, data_len),
-        50 => wire__crate__api__simple__set_group_icon_impl(port, ptr, rust_vec_len, data_len),
-        51 => wire__crate__api__simple__sync_state_impl(port, ptr, rust_vec_len, data_len),
-        52 => wire__crate__api__simple__sync_webdav_impl(port, ptr, rust_vec_len, data_len),
-        53 => wire__crate__api__simple__trash_entry_impl(port, ptr, rust_vec_len, data_len),
-        54 => wire__crate__api__simple__trash_group_impl(port, ptr, rust_vec_len, data_len),
-        55 => wire__crate__api__simple__update_entry_impl(port, ptr, rust_vec_len, data_len),
+        46 => wire__crate__api__simple__restore_entry_impl(port, ptr, rust_vec_len, data_len),
+        47 => wire__crate__api__simple__restore_group_impl(port, ptr, rust_vec_len, data_len),
+        48 => wire__crate__api__simple__restore_sync_backup_impl(port, ptr, rust_vec_len, data_len),
+        50 => wire__crate__api__simple__set_entry_favorite_impl(port, ptr, rust_vec_len, data_len),
+        51 => wire__crate__api__simple__set_group_icon_impl(port, ptr, rust_vec_len, data_len),
+        52 => wire__crate__api__simple__sync_state_impl(port, ptr, rust_vec_len, data_len),
+        53 => wire__crate__api__simple__sync_tencent_cos_impl(port, ptr, rust_vec_len, data_len),
+        54 => wire__crate__api__simple__sync_vault_impl(port, ptr, rust_vec_len, data_len),
+        55 => wire__crate__api__simple__sync_webdav_impl(port, ptr, rust_vec_len, data_len),
+        56 => wire__crate__api__simple__trash_entry_impl(port, ptr, rust_vec_len, data_len),
+        57 => wire__crate__api__simple__trash_group_impl(port, ptr, rust_vec_len, data_len),
+        58 => wire__crate__api__simple__update_entry_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -3043,22 +3218,22 @@ fn pde_ffi_dispatcher_sync_impl(
     match func_id {
         2 => wire__crate__api__simple__audit_password_health_impl(ptr, rust_vec_len, data_len),
         4 => wire__crate__api__simple__close_vault_impl(ptr, rust_vec_len, data_len),
-        11 => wire__crate__api__simple__current_entry_otp_impl(ptr, rust_vec_len, data_len),
-        12 => wire__crate__api__simple__current_otp_impl(ptr, rust_vec_len, data_len),
-        13 => wire__crate__api__simple__default_password_symbols_impl(ptr, rust_vec_len, data_len),
-        19 => wire__crate__api__simple__generate_passphrase_impl(ptr, rust_vec_len, data_len),
-        20 => wire__crate__api__simple__generate_random_password_impl(ptr, rust_vec_len, data_len),
-        21 => wire__crate__api__simple__generate_workspace_id_impl(ptr, rust_vec_len, data_len),
-        23 => wire__crate__api__simple__import_otp_uri_impl(ptr, rust_vec_len, data_len),
-        26 => wire__crate__api__simple__list_entries_impl(ptr, rust_vec_len, data_len),
-        30 => wire__crate__api__simple__load_custom_icon_impl(ptr, rust_vec_len, data_len),
-        31 => wire__crate__api__simple__lock_all_vaults_impl(ptr, rust_vec_len, data_len),
-        34 => {
+        12 => wire__crate__api__simple__current_entry_otp_impl(ptr, rust_vec_len, data_len),
+        13 => wire__crate__api__simple__current_otp_impl(ptr, rust_vec_len, data_len),
+        14 => wire__crate__api__simple__default_password_symbols_impl(ptr, rust_vec_len, data_len),
+        20 => wire__crate__api__simple__generate_passphrase_impl(ptr, rust_vec_len, data_len),
+        21 => wire__crate__api__simple__generate_random_password_impl(ptr, rust_vec_len, data_len),
+        22 => wire__crate__api__simple__generate_workspace_id_impl(ptr, rust_vec_len, data_len),
+        24 => wire__crate__api__simple__import_otp_uri_impl(ptr, rust_vec_len, data_len),
+        27 => wire__crate__api__simple__list_entries_impl(ptr, rust_vec_len, data_len),
+        31 => wire__crate__api__simple__load_custom_icon_impl(ptr, rust_vec_len, data_len),
+        32 => wire__crate__api__simple__lock_all_vaults_impl(ptr, rust_vec_len, data_len),
+        35 => {
             wire__crate__api__simple__normalize_password_symbols_impl(ptr, rust_vec_len, data_len)
         }
-        40 => wire__crate__api__simple__remove_otp_impl(ptr, rust_vec_len, data_len),
-        48 => wire__crate__api__simple__reveal_entry_field_impl(ptr, rust_vec_len, data_len),
-        56 => wire__crate__api__simple__vault_content_impl(ptr, rust_vec_len, data_len),
+        41 => wire__crate__api__simple__remove_otp_impl(ptr, rust_vec_len, data_len),
+        49 => wire__crate__api__simple__reveal_entry_field_impl(ptr, rust_vec_len, data_len),
+        59 => wire__crate__api__simple__vault_content_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -3123,7 +3298,9 @@ impl flutter_rust_bridge::IntoDart for crate::api::simple::BridgeError {
             Self::SyncStateFailed => 28.into_dart(),
             Self::SyncDiagnosticsFailed => 29.into_dart(),
             Self::SyncRestoreDecisionRequired => 30.into_dart(),
-            Self::QuickUnlockFailed => 31.into_dart(),
+            Self::SyncInvalidRemoteHistory => 31.into_dart(),
+            Self::SyncUnsafeBucketVersioning => 32.into_dart(),
+            Self::QuickUnlockFailed => 33.into_dart(),
             _ => unreachable!(),
         }
     }
@@ -3578,6 +3755,56 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::simple::SyncDiagnosticView>
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::simple::SyncProviderConfigView {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.kind.into_into_dart().into_dart(),
+            self.endpoint.into_into_dart().into_dart(),
+            self.username.into_into_dart().into_dart(),
+            self.password.into_into_dart().into_dart(),
+            self.allow_insecure_http.into_into_dart().into_dart(),
+            self.bucket.into_into_dart().into_dart(),
+            self.region.into_into_dart().into_dart(),
+            self.prefix.into_into_dart().into_dart(),
+            self.secret_id.into_into_dart().into_dart(),
+            self.secret_key.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::simple::SyncProviderConfigView
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::simple::SyncProviderConfigView>
+    for crate::api::simple::SyncProviderConfigView
+{
+    fn into_into_dart(self) -> crate::api::simple::SyncProviderConfigView {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::simple::SyncProviderKindView {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            Self::WebDav => 0.into_dart(),
+            Self::TencentCos => 1.into_dart(),
+            _ => unreachable!(),
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::simple::SyncProviderKindView
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::simple::SyncProviderKindView>
+    for crate::api::simple::SyncProviderKindView
+{
+    fn into_into_dart(self) -> crate::api::simple::SyncProviderKindView {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::simple::SyncResult {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -3940,7 +4167,9 @@ impl SseEncode for crate::api::simple::BridgeError {
                 crate::api::simple::BridgeError::SyncStateFailed => 28,
                 crate::api::simple::BridgeError::SyncDiagnosticsFailed => 29,
                 crate::api::simple::BridgeError::SyncRestoreDecisionRequired => 30,
-                crate::api::simple::BridgeError::QuickUnlockFailed => 31,
+                crate::api::simple::BridgeError::SyncInvalidRemoteHistory => 31,
+                crate::api::simple::BridgeError::SyncUnsafeBucketVersioning => 32,
+                crate::api::simple::BridgeError::QuickUnlockFailed => 33,
                 _ => {
                     unimplemented!("");
                 }
@@ -4383,6 +4612,38 @@ impl SseEncode for crate::api::simple::SyncDiagnosticView {
         <u32>::sse_encode(self.auto_merged_objects, serializer);
         <u32>::sse_encode(self.created_conflicts, serializer);
         <u32>::sse_encode(self.pending_conflicts, serializer);
+    }
+}
+
+impl SseEncode for crate::api::simple::SyncProviderConfigView {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <crate::api::simple::SyncProviderKindView>::sse_encode(self.kind, serializer);
+        <String>::sse_encode(self.endpoint, serializer);
+        <String>::sse_encode(self.username, serializer);
+        <String>::sse_encode(self.password, serializer);
+        <bool>::sse_encode(self.allow_insecure_http, serializer);
+        <String>::sse_encode(self.bucket, serializer);
+        <String>::sse_encode(self.region, serializer);
+        <String>::sse_encode(self.prefix, serializer);
+        <String>::sse_encode(self.secret_id, serializer);
+        <String>::sse_encode(self.secret_key, serializer);
+    }
+}
+
+impl SseEncode for crate::api::simple::SyncProviderKindView {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(
+            match self {
+                crate::api::simple::SyncProviderKindView::WebDav => 0,
+                crate::api::simple::SyncProviderKindView::TencentCos => 1,
+                _ => {
+                    unimplemented!("");
+                }
+            },
+            serializer,
+        );
     }
 }
 

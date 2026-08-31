@@ -24,6 +24,11 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('这个 Workspace 还是空的'), findsOneWidget);
+    await tester.binding.setSurfaceSize(const Size(840, 600));
+    await tester.pumpAndSettle();
+    expect(find.byType(TextField), findsOneWidget);
+    await tester.tap(find.byTooltip('更多条目操作'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('导入 OTP'));
     await tester.pumpAndSettle();
     await tester.enterText(
@@ -135,5 +140,12 @@ class _FakeVaultService implements VaultService {
     BigInt handleId,
     String workspaceId,
     WebDavSettings settings,
+  ) async => const SyncSummary(attempts: 1, merged: false);
+
+  @override
+  Future<SyncSummary> syncTencentCos(
+    BigInt handleId,
+    String workspaceId,
+    TencentCosSettings settings,
   ) async => const SyncSummary(attempts: 1, merged: false);
 }

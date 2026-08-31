@@ -36,10 +36,16 @@ class _SettingsPageState extends State<SettingsPage> {
   final endpoint = TextEditingController();
   final username = TextEditingController();
   final password = TextEditingController();
+  final bucket = TextEditingController();
+  final region = TextEditingController();
+  final prefix = TextEditingController();
+  final secretId = TextEditingController();
+  final secretKey = TextEditingController();
   late final symbolCharacters = TextEditingController(
     text: widget.service.preferences.value.passwordSymbols,
   );
   bool allowInsecureHttp = false;
+  SyncProviderType syncProvider = SyncProviderType.webDav;
   bool autoSync = true;
   bool nonMeteredOnly = false;
   bool passwordStored = false;
@@ -48,7 +54,6 @@ class _SettingsPageState extends State<SettingsPage> {
   bool canQuickUnlock = false;
   SyncSummary? lastSync;
   List<SyncConflictItem> conflicts = const [];
-  List<SyncBackupItem> backups = const [];
   List<SyncDiagnosticItem> diagnostics = const [];
   bool restorePending = false;
   bool attachmentConflict = false;
@@ -71,6 +76,11 @@ class _SettingsPageState extends State<SettingsPage> {
     endpoint.dispose();
     username.dispose();
     password.dispose();
+    bucket.dispose();
+    region.dispose();
+    prefix.dispose();
+    secretId.dispose();
+    secretKey.dispose();
     symbolCharacters.dispose();
     super.dispose();
   }
@@ -80,6 +90,12 @@ class _SettingsPageState extends State<SettingsPage> {
     endpoint.text = settings.endpoint;
     username.text = settings.username;
     password.clear();
+    syncProvider = settings.provider;
+    bucket.text = settings.bucket;
+    region.text = settings.region;
+    prefix.text = settings.prefix;
+    secretId.clear();
+    secretKey.clear();
     allowInsecureHttp = settings.allowInsecureHttp;
     autoSync = settings.autoSync;
     nonMeteredOnly = settings.nonMeteredOnly;
@@ -113,16 +129,24 @@ class _SettingsPageState extends State<SettingsPage> {
       workspaces = await widget.service.saveWorkspaceSync(
         workspace,
         WorkspaceSyncSettings(
+          provider: syncProvider,
           endpoint: endpoint.text,
           username: username.text,
           allowInsecureHttp: allowInsecureHttp,
+          bucket: bucket.text,
+          region: region.text,
+          prefix: prefix.text,
           autoSync: autoSync,
           nonMeteredOnly: nonMeteredOnly,
           passwordStored: passwordStored,
         ),
         password: password.text.isEmpty ? null : password.text,
+        secretId: secretId.text.isEmpty ? null : secretId.text,
+        secretKey: secretKey.text.isEmpty ? null : secretKey.text,
       );
       password.clear();
+      secretId.clear();
+      secretKey.clear();
       widget.onWorkspacesChanged(workspaces);
       if (mounted) setState(() {});
     }, success: context.tr('同步设置已保存。'));
@@ -138,6 +162,8 @@ class _SettingsPageState extends State<SettingsPage> {
         handle,
         workspace,
         passwordOverride: password.text.isEmpty ? null : password.text,
+        secretIdOverride: secretId.text.isEmpty ? null : secretId.text,
+        secretKeyOverride: secretKey.text.isEmpty ? null : secretKey.text,
       );
       await _loadSyncData();
       widget.onVaultChanged();
@@ -155,10 +181,8 @@ class _SettingsPageState extends State<SettingsPage> {
     diagnostics = await widget.service.listSyncDiagnostics(workspace.id);
     if (handle != null) {
       conflicts = await widget.service.listSyncConflicts(handle);
-      backups = await widget.service.listSyncBackups(handle, workspace.id);
     } else {
       conflicts = const [];
-      backups = const [];
     }
   }
 
@@ -238,49 +262,6 @@ class _SettingsPageState extends State<SettingsPage> {
     }, success: success);
   }
 
-  Future<void> _restoreBackup(SyncBackupItem backup) async {
-    final workspace = selected;
-    final handle = widget.handles[workspace?.id];
-    if (workspace == null || handle == null) return;
-    final success = context.tr('备份已恢复，自动同步已暂停。');
-    final accepted = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(context.tr('恢复加密备份？')),
-        content: Text(context.tr('当前文件会先自动备份。恢复后自动同步将暂停，避免直接覆盖远端。')),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text(context.tr('取消')),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: Text(context.tr('恢复并暂停同步')),
-          ),
-        ],
-      ),
-    );
-    if (accepted != true) return;
-    await _run(() async {
-      await widget.service.restoreSyncBackup(handle, workspace.id, backup.id);
-      workspaces = await widget.service.saveWorkspaceSync(
-        workspace,
-        WorkspaceSyncSettings(
-          endpoint: workspace.sync.endpoint,
-          username: workspace.sync.username,
-          allowInsecureHttp: workspace.sync.allowInsecureHttp,
-          autoSync: false,
-          nonMeteredOnly: workspace.sync.nonMeteredOnly,
-          passwordStored: workspace.sync.passwordStored,
-        ),
-      );
-      widget.onWorkspacesChanged(workspaces);
-      await _loadSyncData();
-      widget.onVaultChanged();
-      if (mounted) setState(() {});
-    }, success: success);
-  }
-
   Future<void> _completeRestore(RestoreSyncDecision decision) async {
     final workspace = selected;
     final handle = widget.handles[workspace?.id];
@@ -296,6 +277,8 @@ class _SettingsPageState extends State<SettingsPage> {
         workspace,
         decision,
         passwordOverride: password.text.isEmpty ? null : password.text,
+        secretIdOverride: secretId.text.isEmpty ? null : secretId.text,
+        secretKeyOverride: secretKey.text.isEmpty ? null : secretKey.text,
       );
       await _loadSyncData();
       widget.onVaultChanged();
@@ -570,7 +553,6 @@ class _SettingsPageState extends State<SettingsPage> {
       health = null;
       lastSync = null;
       conflicts = const [];
-      backups = const [];
       diagnostics = const [];
       restorePending = false;
       attachmentConflict = false;
@@ -583,33 +565,100 @@ class _SettingsPageState extends State<SettingsPage> {
     children: [
       _heading(
         context.tr('同步'),
-        context.tr('每个 Workspace 使用独立 WebDAV 配置。密码可选存入系统安全存储。'),
+        context.tr('每个 Workspace 使用独立远端存储配置。凭据可选存入系统安全存储。'),
       ),
       _workspacePicker(),
       const SizedBox(height: 16),
-      TextField(
-        controller: endpoint,
-        decoration: InputDecoration(
-          labelText: context.tr('WebDAV 文件 URL'),
-          hintText: 'https://dav.example.com/personal.kdbx',
-        ),
+      DropdownButtonFormField<SyncProviderType>(
+        initialValue: syncProvider,
+        decoration: InputDecoration(labelText: context.tr('同步服务')),
+        items: [
+          DropdownMenuItem(
+            value: SyncProviderType.webDav,
+            child: Text(context.tr('WebDAV')),
+          ),
+          DropdownMenuItem(
+            value: SyncProviderType.tencentCos,
+            child: Text(context.tr('腾讯云 COS')),
+          ),
+        ],
+        onChanged: busy
+            ? null
+            : (value) => setState(() => syncProvider = value!),
       ),
       const SizedBox(height: 12),
-      TextField(
-        controller: username,
-        decoration: InputDecoration(labelText: context.tr('用户名')),
-      ),
-      const SizedBox(height: 12),
-      TextField(
-        controller: password,
-        obscureText: true,
-        decoration: InputDecoration(
-          labelText: context.tr(passwordStored ? '密码（留空则保留已保存密码）' : '密码'),
+      if (syncProvider == SyncProviderType.webDav) ...[
+        TextField(
+          controller: endpoint,
+          decoration: InputDecoration(
+            labelText: context.tr('WebDAV 文件 URL'),
+            hintText: 'https://dav.example.com/personal.kdbx',
+          ),
         ),
-      ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: username,
+          decoration: InputDecoration(labelText: context.tr('用户名')),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: password,
+          obscureText: true,
+          decoration: InputDecoration(
+            labelText: context.tr('密码'),
+            helperText: passwordStored ? context.tr('已保存；留空表示不修改') : null,
+          ),
+        ),
+      ] else ...[
+        TextField(
+          controller: bucket,
+          decoration: InputDecoration(
+            labelText: context.tr('存储桶名称（含 APPID）'),
+            hintText: 'vault-1250000000',
+          ),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: region,
+          decoration: InputDecoration(
+            labelText: context.tr('地域'),
+            hintText: 'ap-guangzhou',
+          ),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: prefix,
+          decoration: InputDecoration(
+            labelText: context.tr('同步目录'),
+            hintText: 'authenticator/personal',
+            helperText: context.tr('用于区分不同 Workspace 的同步数据'),
+          ),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: secretId,
+          obscureText: true,
+          decoration: InputDecoration(
+            labelText: 'SecretId',
+            helperText: passwordStored ? context.tr('已保存；留空表示不修改') : null,
+          ),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: secretKey,
+          obscureText: true,
+          decoration: InputDecoration(
+            labelText: 'SecretKey',
+            helperText: passwordStored ? context.tr('已保存；留空表示不修改') : null,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(context.tr('COS 存储桶必须关闭版本控制；同步仅创建不可变对象。')),
+      ],
       SwitchListTile(
         contentPadding: EdgeInsets.zero,
-        title: Text(context.tr('将密码保存到系统安全存储')),
+        title: Text(context.tr('记住登录信息')),
+        subtitle: Text(context.tr('安全保存在本机，下次同步无需再次输入')),
         value: passwordStored,
         onChanged: (value) => setState(() => passwordStored = value),
       ),
@@ -626,13 +675,14 @@ class _SettingsPageState extends State<SettingsPage> {
         value: nonMeteredOnly,
         onChanged: (value) => setState(() => nonMeteredOnly = value),
       ),
-      SwitchListTile(
-        contentPadding: EdgeInsets.zero,
-        title: Text(context.tr('允许不安全 HTTP')),
-        subtitle: Text(context.tr('默认关闭，仅用于受信任的局域网测试环境')),
-        value: allowInsecureHttp,
-        onChanged: (value) => setState(() => allowInsecureHttp = value),
-      ),
+      if (syncProvider == SyncProviderType.webDav)
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: Text(context.tr('允许不安全 HTTP')),
+          subtitle: Text(context.tr('默认关闭，仅用于受信任的局域网测试环境')),
+          value: allowInsecureHttp,
+          onChanged: (value) => setState(() => allowInsecureHttp = value),
+        ),
       const SizedBox(height: 12),
       Wrap(
         spacing: 12,
@@ -701,9 +751,7 @@ class _SettingsPageState extends State<SettingsPage> {
               child: Text(context.tr('解决')),
             ),
           ),
-      const SizedBox(height: 20),
-      Text(context.tr('加密备份'), style: Theme.of(context).textTheme.titleMedium),
-      Text(context.tr('备份保持 KDBX 加密状态，并按 Workspace 独立保存。')),
+      if (restorePending || attachmentConflict) const SizedBox(height: 20),
       if (restorePending)
         Card(
           color: Theme.of(context).colorScheme.tertiaryContainer,
@@ -747,17 +795,6 @@ class _SettingsPageState extends State<SettingsPage> {
           leading: const Icon(Icons.attachment_outlined),
           title: Text(context.tr('附件在多端同时发生变化，同步已安全停止。')),
           subtitle: Text(context.tr('当前版本不会猜测合并附件；请在其中一端撤销附件变化后重试。')),
-        ),
-      for (final backup in backups.take(8))
-        ListTile(
-          contentPadding: EdgeInsets.zero,
-          leading: const Icon(Icons.restore_outlined),
-          title: Text(backup.createdAt.toLocal().toString()),
-          subtitle: Text('${backup.origin} · ${backup.encryptedSize} B'),
-          trailing: TextButton(
-            onPressed: busy ? null : () => _restoreBackup(backup),
-            child: Text(context.tr('恢复')),
-          ),
         ),
       const SizedBox(height: 20),
       Text(context.tr('同步诊断'), style: Theme.of(context).textTheme.titleMedium),
@@ -856,15 +893,48 @@ class _SettingsPageState extends State<SettingsPage> {
   );
 
   Widget _about() => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
+    crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
-      _heading(context.tr('关于'), 'Authenticator Vault 0.4.0'),
+      _heading(
+        context.tr('关于 Authenticator Vault'),
+        context.tr('安心保存密码和动态验证码，离线也能随时使用。'),
+      ),
+      Card(
+        child: Column(
+          children: [
+            ListTile(
+              leading: const Icon(Icons.shield_outlined),
+              title: Text(context.tr('数据由你掌控')),
+              subtitle: Text(context.tr('密码和动态验证码只在本机解密；同步时传输的仍是加密文件。')),
+            ),
+            const Divider(height: 1, indent: 56),
+            ListTile(
+              leading: const Icon(Icons.cloud_sync_outlined),
+              title: Text(context.tr('按你的方式同步')),
+              subtitle: Text(context.tr('每个 Workspace 都可以单独选择同步服务，也可以完全离线使用。')),
+            ),
+          ],
+        ),
+      ),
+      const SizedBox(height: 24),
+      Text(context.tr('应用信息'), style: Theme.of(context).textTheme.titleMedium),
+      const SizedBox(height: 6),
       ListTile(
         contentPadding: EdgeInsets.zero,
-        leading: const Icon(Icons.shield_outlined),
-        title: Text(context.tr('离线优先 KDBX 密码与 OTP 工具')),
-        subtitle: const Text(
-          'KDBX 4.1 · Android / iOS / Linux / macOS / Windows',
+        leading: const Icon(Icons.info_outline),
+        title: Text(context.tr('版本')),
+        trailing: const Text('0.4.0'),
+      ),
+      ListTile(
+        contentPadding: EdgeInsets.zero,
+        leading: const Icon(Icons.description_outlined),
+        title: Text(context.tr('开源许可')),
+        subtitle: Text(context.tr('查看应用使用的开源软件及许可信息')),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: () => showLicensePage(
+          context: context,
+          applicationName: 'Authenticator Vault',
+          applicationVersion: '0.4.0',
         ),
       ),
     ],

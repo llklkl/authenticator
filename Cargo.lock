@@ -1116,7 +1116,7 @@ dependencies = [
  "hybrid-array",
  "indexmap",
  "js-sys",
- "quick-xml",
+ "quick-xml 0.41.0",
  "rust-argon2",
  "salsa20",
  "secrecy",
@@ -1319,6 +1319,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "985e7ec9bb745e6ce6535b544d84d6cd6f7ad8bd711c398938ae983b91a766d9"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "quick-xml"
+version = "0.39.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cdcc8dd4e2f670d309a5f0e83fe36dfdc05af317008fea29144da1a2ac858e5e"
+dependencies = [
+ "memchr",
+ "serde",
 ]
 
 [[package]]
@@ -1790,10 +1800,16 @@ name = "sync_core"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "base64 0.22.1",
  "futures-lite",
+ "hmac",
+ "md-5",
+ "percent-encoding",
+ "quick-xml 0.39.4",
  "reqwest",
  "serde",
  "serde_json",
+ "sha1",
  "sha2",
  "tempfile",
  "thiserror",

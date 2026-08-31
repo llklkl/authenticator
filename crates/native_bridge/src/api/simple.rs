@@ -8,9 +8,9 @@ use std::{
 
 use flutter_rust_bridge::frb;
 use sync_core::{
-    BackupOrigin, ConditionalUpload, DiagnosticEvent, FileBackupStore, FileSyncStateStore,
-    MergeOutput, MergeReport as SyncMergeReport, SyncAction, SyncEngine, SyncError, SyncProvider,
-    SyncSuspension, VaultMerger, WebDavProvider,
+    AppendOnlySyncEngine, BackupOrigin, ConditionalUpload, DiagnosticEvent, FileBackupStore,
+    FileSyncStateStore, MergeOutput, MergeReport as SyncMergeReport, SyncAction, SyncEngine,
+    SyncError, SyncProvider, SyncSuspension, TencentCosVfs, VaultMerger, WebDavProvider,
 };
 use uuid::Uuid;
 use vault_core::{
@@ -297,6 +297,8 @@ pub enum BridgeError {
     SyncStateFailed,
     SyncDiagnosticsFailed,
     SyncRestoreDecisionRequired,
+    SyncInvalidRemoteHistory,
+    SyncUnsafeBucketVersioning,
     QuickUnlockFailed,
 }
 
@@ -313,6 +315,37 @@ pub enum SyncActionView {
 pub enum RestoreDecisionView {
     Merge,
     ReplaceRemote,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyncProviderKindView {
+    WebDav,
+    TencentCos,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct SyncProviderConfigView {
+    pub kind: SyncProviderKindView,
+    pub endpoint: String,
+    pub username: String,
+    pub password: String,
+    pub allow_insecure_http: bool,
+    pub bucket: String,
+    pub region: String,
+    pub prefix: String,
+    pub secret_id: String,
+    pub secret_key: String,
+}
+
+impl fmt::Debug for SyncProviderConfigView {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SyncProviderConfigView")
+            .field("kind", &self.kind)
+            .field("location", &"[REDACTED]")
+            .field("credentials", &"[REDACTED]")
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -965,9 +998,11 @@ pub fn sync_webdav(
         return Err(BridgeError::SyncRestoreDecisionRequired);
     }
     let provider = WebDavProvider::new(&endpoint, username, password, allow_insecure_http)?;
+    let location_fingerprint = hex_bytes(&provider.location_fingerprint());
     let backups = FileBackupStore::new(state_directory.join("backups"), 20)?;
     let install_backups = FileBackupStore::new(state_directory.join("backups"), 20)?;
-    let base = state.load_base()?;
+    let bound_base = state.load_bound_base(&location_fingerprint)?;
+    let base = bound_base.encrypted;
     let session = get_vault(handle_id)?;
     let mut session = session
         .lock()
@@ -997,7 +1032,7 @@ pub fn sync_webdav(
     };
     install_backups.store_labeled(&local, BackupOrigin::LocalBeforeInstall)?;
     session.install_synced_snapshot(&outcome.encrypted_bytes)?;
-    state.commit_base(&outcome.encrypted_bytes)?;
+    state.commit_bound_base(&outcome.encrypted_bytes, location_fingerprint, None)?;
     state.record_success(outcome.action, outcome.report.pending_conflicts)?;
     let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
     state.append_diagnostic(DiagnosticEvent::success(
@@ -1017,6 +1052,221 @@ pub fn sync_webdav(
         pending_conflicts: outcome.report.pending_conflicts,
         baseline_rebuilt: outcome.report.baseline_rebuilt,
     })
+}
+
+pub fn sync_vault(
+    handle_id: u64,
+    provider: SyncProviderConfigView,
+    state_directory: String,
+) -> Result<SyncResult, BridgeError> {
+    match provider.kind {
+        SyncProviderKindView::WebDav => sync_webdav(
+            handle_id,
+            provider.endpoint,
+            provider.username,
+            provider.password,
+            provider.allow_insecure_http,
+            state_directory,
+        ),
+        SyncProviderKindView::TencentCos => sync_tencent_cos(
+            handle_id,
+            provider.bucket,
+            provider.region,
+            provider.prefix,
+            provider.secret_id,
+            provider.secret_key,
+            state_directory,
+        ),
+    }
+}
+
+pub fn sync_tencent_cos(
+    handle_id: u64,
+    bucket: String,
+    region: String,
+    prefix: String,
+    secret_id: String,
+    secret_key: String,
+    state_directory: String,
+) -> Result<SyncResult, BridgeError> {
+    let started = Instant::now();
+    let state_directory = PathBuf::from(state_directory);
+    let state = FileSyncStateStore::new(state_directory.clone());
+    if state.load_state()?.suspension == Some(SyncSuspension::RestorePending) {
+        return Err(BridgeError::SyncRestoreDecisionRequired);
+    }
+    let provider = TencentCosVfs::new(&bucket, &region, &prefix, secret_id, secret_key)?;
+    let location_fingerprint = hex_bytes(&provider.location_fingerprint());
+    let bound_base = state.load_bound_base(&location_fingerprint)?;
+    let base = bound_base.encrypted;
+    let base_commit_id = bound_base.commit_id;
+    let backups = FileBackupStore::new(state_directory.join("backups"), 20)?;
+    let install_backups = FileBackupStore::new(state_directory.join("backups"), 20)?;
+    let session = get_vault(handle_id)?;
+    let mut session = session
+        .lock()
+        .map_err(|_| BridgeError::SessionUnavailable)?;
+    let local = session.encrypted_snapshot()?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|_| BridgeError::SyncFailed)?;
+    let result = runtime.block_on(async {
+        provider.ensure_versioning_disabled().await?;
+        let engine = AppendOnlySyncEngine::new(provider, SessionVaultMerger(&session), backups);
+        engine
+            .synchronize(
+                &local,
+                base.as_ref().map(|bytes| bytes.as_slice()),
+                base_commit_id.as_deref(),
+            )
+            .await
+    });
+    let outcome = match result {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+            if error == SyncError::AttachmentConflictUnsupported {
+                let _ = state.suspend(SyncSuspension::AttachmentConflict);
+            }
+            let _ = state.append_diagnostic(DiagnosticEvent::failure(
+                sync_error_code(&error),
+                duration_ms,
+            ));
+            return Err(error.into());
+        }
+    };
+    install_backups.store_labeled(&local, BackupOrigin::LocalBeforeInstall)?;
+    session.install_synced_snapshot(&outcome.encrypted_bytes)?;
+    state.commit_bound_base(
+        &outcome.encrypted_bytes,
+        location_fingerprint,
+        Some(outcome.uploaded_etag.clone()),
+    )?;
+    state.record_success(outcome.action, outcome.report.pending_conflicts)?;
+    let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+    state.append_diagnostic(DiagnosticEvent::success(
+        outcome.action,
+        u32::try_from(outcome.attempts).unwrap_or(u32::MAX),
+        duration_ms,
+        outcome.report.auto_merged_objects,
+        outcome.report.created_conflicts,
+        outcome.report.pending_conflicts,
+    ))?;
+    Ok(sync_result(outcome))
+}
+
+pub fn complete_restore(
+    handle_id: u64,
+    provider: SyncProviderConfigView,
+    state_directory: String,
+    decision: RestoreDecisionView,
+) -> Result<SyncResult, BridgeError> {
+    match provider.kind {
+        SyncProviderKindView::WebDav => complete_restore_webdav(
+            handle_id,
+            provider.endpoint,
+            provider.username,
+            provider.password,
+            provider.allow_insecure_http,
+            state_directory,
+            decision,
+        ),
+        SyncProviderKindView::TencentCos => {
+            complete_restore_tencent_cos(handle_id, provider, state_directory, decision)
+        }
+    }
+}
+
+fn complete_restore_tencent_cos(
+    handle_id: u64,
+    provider_config: SyncProviderConfigView,
+    state_directory: String,
+    decision: RestoreDecisionView,
+) -> Result<SyncResult, BridgeError> {
+    let state_directory = PathBuf::from(state_directory);
+    let state = FileSyncStateStore::new(state_directory.clone());
+    if state.load_state()?.suspension != Some(SyncSuspension::RestorePending) {
+        return Err(BridgeError::InvalidInput);
+    }
+    if decision == RestoreDecisionView::Merge {
+        state.clear_suspension()?;
+        let result = sync_tencent_cos(
+            handle_id,
+            provider_config.bucket,
+            provider_config.region,
+            provider_config.prefix,
+            provider_config.secret_id,
+            provider_config.secret_key,
+            state_directory.to_string_lossy().into_owned(),
+        );
+        if result.is_err() {
+            let _ = state.suspend(SyncSuspension::RestorePending);
+        }
+        return result;
+    }
+
+    let started = Instant::now();
+    let provider = TencentCosVfs::new(
+        &provider_config.bucket,
+        &provider_config.region,
+        &provider_config.prefix,
+        provider_config.secret_id,
+        provider_config.secret_key,
+    )?;
+    let location_fingerprint = hex_bytes(&provider.location_fingerprint());
+    let base_commit_id = state.load_bound_base(&location_fingerprint)?.commit_id;
+    let backups = FileBackupStore::new(state_directory.join("backups"), 20)?;
+    let session = get_vault(handle_id)?;
+    let session = session
+        .lock()
+        .map_err(|_| BridgeError::SessionUnavailable)?;
+    let local = session.encrypted_snapshot()?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|_| BridgeError::SyncFailed)?;
+    let result = runtime.block_on(async {
+        provider.ensure_versioning_disabled().await?;
+        let engine = AppendOnlySyncEngine::new(provider, SessionVaultMerger(&session), backups);
+        engine
+            .replace_remote(
+                &local,
+                |bytes| {
+                    session
+                        .validate_replica_snapshot(bytes)
+                        .map_err(map_vault_merge_error)
+                },
+                base_commit_id.as_deref(),
+            )
+            .await
+    });
+    let outcome = match result {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            let _ = state.append_diagnostic(DiagnosticEvent::failure(
+                sync_error_code(&error),
+                u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            ));
+            return Err(error.into());
+        }
+    };
+    state.commit_bound_base(
+        &local,
+        location_fingerprint,
+        Some(outcome.uploaded_etag.clone()),
+    )?;
+    state.clear_suspension()?;
+    state.record_success(outcome.action, 0)?;
+    state.append_diagnostic(DiagnosticEvent::success(
+        outcome.action,
+        1,
+        u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+        0,
+        0,
+        0,
+    ))?;
+    Ok(sync_result(outcome))
 }
 
 /// Complete a restore with an explicit user choice. Merge re-enters the normal
@@ -1073,6 +1323,7 @@ fn replace_remote_after_restore(
 ) -> Result<SyncResult, BridgeError> {
     let started = Instant::now();
     let provider = WebDavProvider::new(endpoint, username, password, allow_insecure_http)?;
+    let location_fingerprint = hex_bytes(&provider.location_fingerprint());
     let state = FileSyncStateStore::new(state_directory.to_path_buf());
     let backups = FileBackupStore::new(state_directory.join("backups"), 20)?;
     let session = get_vault(handle_id)?;
@@ -1126,7 +1377,7 @@ fn replace_remote_after_restore(
     } else {
         SyncAction::Uploaded
     };
-    state.commit_base(&local)?;
+    state.commit_bound_base(&local, location_fingerprint, None)?;
     state.record_success(action, 0)?;
     state.append_diagnostic(DiagnosticEvent::success(
         action,
@@ -1513,12 +1764,31 @@ fn sync_error_code(error: &SyncError) -> &'static str {
         SyncError::RetryLimitReached => "retry_limit_reached",
         SyncError::InvalidConfiguration => "invalid_configuration",
         SyncError::ConditionalWritesUnsupported => "conditional_writes_unsupported",
+        SyncError::UnsupportedOperation => "unsupported_operation",
+        SyncError::InvalidRemoteHistory => "invalid_remote_history",
+        SyncError::UnsafeBucketVersioning => "unsafe_bucket_versioning",
         SyncError::State => "state",
         SyncError::Diagnostics => "diagnostics",
         SyncError::RemoteVaultMismatch => "remote_vault_mismatch",
         SyncError::AttachmentConflictUnsupported => "attachment_conflict_unsupported",
         SyncError::RestoreDecisionRequired => "restore_decision_required",
     }
+}
+
+fn sync_result(outcome: sync_core::SyncOutcome) -> SyncResult {
+    SyncResult {
+        attempts: u32::try_from(outcome.attempts).unwrap_or(u32::MAX),
+        merged: outcome.merged,
+        action: outcome.action.into(),
+        auto_merged_objects: outcome.report.auto_merged_objects,
+        created_conflicts: outcome.report.created_conflicts,
+        pending_conflicts: outcome.report.pending_conflicts,
+        baseline_rebuilt: outcome.report.baseline_rebuilt,
+    }
+}
+
+fn hex_bytes(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 impl From<SyncAction> for SyncActionView {
@@ -1715,11 +1985,14 @@ impl From<SyncError> for BridgeError {
             SyncError::State => Self::SyncStateFailed,
             SyncError::Diagnostics => Self::SyncDiagnosticsFailed,
             SyncError::RestoreDecisionRequired => Self::SyncRestoreDecisionRequired,
+            SyncError::InvalidRemoteHistory => Self::SyncInvalidRemoteHistory,
+            SyncError::UnsafeBucketVersioning => Self::SyncUnsafeBucketVersioning,
             SyncError::RemoteNotFound
             | SyncError::PreconditionFailed
             | SyncError::Provider
             | SyncError::Merge
-            | SyncError::InvalidConfiguration => Self::SyncFailed,
+            | SyncError::InvalidConfiguration
+            | SyncError::UnsupportedOperation => Self::SyncFailed,
         }
     }
 }
