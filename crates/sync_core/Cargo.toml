@@ -10,7 +10,7 @@ rust-version.workspace = true
 async-trait.workspace = true
 base64 = "0.22"
 hmac.workspace = true
-md-5 = "0.10"
+md-5 = "0.11"
 percent-encoding.workspace = true
 quick-xml = { version = "0.39", features = ["serialize"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
